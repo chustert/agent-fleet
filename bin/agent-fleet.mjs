@@ -2,7 +2,7 @@
 
 const [major] = process.versions.node.split(".").map(Number);
 if (major < 20) {
-  process.stderr.write(`skill-fleet needs Node.js 20 or later; this is ${process.version}.\n`);
+  process.stderr.write(`agent-fleet needs Node.js 20 or later; this is ${process.version}.\n`);
   process.exit(1);
 }
 

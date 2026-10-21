@@ -215,11 +215,11 @@ each repository in its routing table. --all-repos covers every repository the
 owner has instead. Pass that file's sprint time zone as --timezone. Without it
 or --date, today's date comes from this machine's clock and the script warns.`;
 // The update rule, worded as .agents/references/project-profile.md words it in "Updating the installation".
-export const REPAIR = "Ask the user to run npx skill-fleet@latest update --dry-run and then "
-  + "npx skill-fleet@latest update in their own terminal. The update creates or repairs the project board on "
+export const REPAIR = "Ask the user to run npx agent-fleet@latest update --dry-run and then "
+  + "npx agent-fleet@latest update in their own terminal. The update creates or repairs the project board on "
   + "GitHub. Do not run it yourself without the user's approval. If the user asks you to run it, run "
-  + "npx skill-fleet@latest update --dry-run --yes and show the user the plan it prints. Run "
-  + "npx skill-fleet@latest update --yes only after the user approves that exact plan, with the same flags, such "
+  + "npx agent-fleet@latest update --dry-run --yes and show the user the plan it prints. Run "
+  + "npx agent-fleet@latest update --yes only after the user approves that exact plan, with the same flags, such "
   + "as --board or --tools for a choice the user made. Adding --force, which overwrites files changed by hand, "
   + "needs its own approval.";
 export const SCOPE_REQUIRED = "Pass --repo <owner/repo> for each repository to cover, or --all-repos to cover "

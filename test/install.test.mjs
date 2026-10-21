@@ -6,7 +6,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import * as checks from "../lib/check-skills.mjs";
 import { main, parseArgs, UsageError } from "../lib/cli.mjs";
-import { compareVersions, markdownTables, missingSettings, ROOT, skillNames, version } from "../lib/install.mjs";
+import { agentNames, compareVersions, markdownTables, missingSettings, ROOT, skillNames, version } from "../lib/install.mjs";
 import { FakeGitHub } from "./fake-github.mjs";
 
 const SKILLS = skillNames();
@@ -44,7 +44,7 @@ async function run(argv, { cwd, interactive = false, answers = {}, github = new 
 
 /** A temporary folder that is a Git repository with a GitHub origin, unless remote is null. */
 function tempProject(name = "project", remote = `https://github.com/acme/${name}.git`) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "skill-fleet-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-"));
   const project = path.join(dir, name);
   fs.mkdirSync(project);
   if (remote !== null) {
@@ -89,7 +89,7 @@ describe("install", () => {
     assert.equal(exists(project, ".kiro"), false);
     assert.ok(exists(project, ".agents/references/platforms/game.md"));
     assert.ok(exists(project, ".agents/scripts/check-skills.mjs"));
-    assert.equal(read(project, ".agents/skill-fleet-LICENSE"), fs.readFileSync(path.join(ROOT, "LICENSE"), "utf8"));
+    assert.equal(read(project, ".agents/agent-fleet-LICENSE"), fs.readFileSync(path.join(ROOT, "LICENSE"), "utf8"));
     for (const name of SKILLS.filter((skill) => fs.existsSync(path.join(ROOT, "skills", skill, "LICENSE")))) {
       assert.ok(exists(project, `.agents/skills/${name}/LICENSE`), name);
     }
@@ -217,9 +217,9 @@ describe("install", () => {
       const github = new FakeGitHub();
       const { code, output } = await run([command, ...argv, "--yes"], { github, cwd });
       assert.equal(code, 1, output);
-      assert.ok(output.includes(`installed with skill-fleet ${newer}, which is newer than this skill-fleet ${version()}`));
+      assert.ok(output.includes(`installed with agent-fleet ${newer}, which is newer than this agent-fleet ${version()}`));
       const again = [command, ...argv].join(" ");
-      assert.ok(output.includes(`Run npx skill-fleet@${newer} ${again}, or npx skill-fleet@latest ${again} once ${newer} is published`),
+      assert.ok(output.includes(`Run npx agent-fleet@${newer} ${again}, or npx agent-fleet@latest ${again} once ${newer} is published`),
         output);
       assert.deepEqual(github.calls, []);
     }
@@ -296,13 +296,52 @@ describe("install", () => {
   test("refuses to install into the fleet itself", async () => {
     const { code, output } = await run(["install", path.join(ROOT, "skills")]);
     assert.equal(code, 1);
-    assert.match(output, /not into the skill fleet itself/);
+    assert.match(output, /not into the agent fleet itself/);
   });
 
   test("the project defaults to the current directory", async () => {
     const { code } = await run(["--yes"], { cwd: project });
     assert.equal(code, 0);
     assert.ok(exists(project, ".agents/skills/tdd/SKILL.md"));
+  });
+
+  test("takes over a project that skill-fleet installed", async () => {
+    await install();
+    // Recreate what skill-fleet 1.5.1 left: its manifest, its licence copy, and its markers.
+    const manifest = JSON.parse(read(project, checks.MANIFEST));
+    const licence = fs.readFileSync(path.join(ROOT, "LICENSE"));
+    fs.renameSync(path.join(project, ".agents/agent-fleet-LICENSE"), path.join(project, ".agents/skill-fleet-LICENSE"));
+    delete manifest.files[".agents/agent-fleet-LICENSE"];
+    manifest.files[".agents/skill-fleet-LICENSE"] = checks.sha256(licence);
+    fs.writeFileSync(path.join(project, checks.LEGACY_MANIFEST),
+      JSON.stringify({ ...manifest, fleet: "skill-fleet", version: "9.9.9" }));
+    fs.rmSync(path.join(project, checks.MANIFEST));
+    for (const name of ["AGENTS.md", "CLAUDE.md"]) {
+      write(project, name, read(project, name).replaceAll("agent-fleet:", "skill-fleet:"));
+    }
+    const { code, output } = await run(["update", project, "--yes"]);
+    assert.equal(code, 0, output);
+    assert.match(output, /takes the installation over/);
+    assert.equal(exists(project, checks.LEGACY_MANIFEST), false);
+    assert.equal(exists(project, ".agents/skill-fleet-LICENSE"), false);
+    assert.ok(exists(project, ".agents/agent-fleet-LICENSE"));
+    assert.equal(JSON.parse(read(project, checks.MANIFEST)).fleet, "agent-fleet");
+    for (const name of ["AGENTS.md", "CLAUDE.md"]) {
+      assert.doesNotMatch(read(project, name), /skill-fleet:/, name);
+      assert.match(read(project, name), /<!-- agent-fleet:begin/, name);
+    }
+    assert.deepEqual(checks.check(project), []);
+  });
+
+  test("a takeover names the old manifest in a dry run, and stops on a corrupt one", async () => {
+    await install();
+    fs.renameSync(path.join(project, checks.MANIFEST), path.join(project, checks.LEGACY_MANIFEST));
+    const dry = await run(["update", project, "--yes", "--dry-run"]);
+    assert.match(dry.output, /would delete \.agents\/skill-fleet\.json/);
+    write(project, checks.LEGACY_MANIFEST, "{ broken");
+    const broken = await run(["update", project, "--yes"]);
+    assert.equal(broken.code, 1);
+    assert.match(broken.output, /skill-fleet\.json is not valid JSON/);
   });
 
   test("upgrades a project installed by the Python version of the fleet", async () => {
@@ -327,6 +366,119 @@ describe("install", () => {
   });
 });
 
+describe("agent team", () => {
+  let dir;
+  let project;
+  beforeEach(() => ({ dir, project } = tempProject()));
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const install = (...argv) => run(["install", project, "--yes", ...argv]);
+  const settings = () => JSON.parse(read(project, ".claude/settings.json"));
+  const hookCommands = (value) => JSON.stringify(value.hooks ?? {});
+
+  test("Claude Code gets the agents, the gate, the automations, and the merged settings", async () => {
+    const { code, output } = await install();
+    assert.equal(code, 0, output);
+    for (const name of agentNames()) assert.ok(exists(project, `.claude/agents/${name}.md`), name);
+    for (const file of ["gate.mjs", "second-opinion.mjs"]) assert.ok(exists(project, `.agents/scripts/${file}`), file);
+    assert.ok(exists(project, ".claude/automations/README.md"));
+    assert.equal(read(project, ".claude/agent-memory-local/.gitignore"), "*\n!.gitignore\n");
+    assert.match(hookCommands(settings()), /gate\.mjs hook bash-guard/);
+    assert.ok(settings().permissions.deny.includes("Bash(gh pr merge *)"));
+    assert.ok(JSON.parse(read(project, checks.MANIFEST)).settings.owned.length > 10);
+    assert.match(checks.findBlock(read(project, "AGENTS.md")), /claude --agent engineering-lead/);
+    assert.match(output, /create [^\n]*docs\/agents\/autonomy\.md/);
+    assert.deepEqual(checks.check(project), []);
+  });
+
+  test("without Claude Code there is no team", async () => {
+    const { code, output } = await install("--cursor");
+    assert.equal(code, 0, output);
+    for (const relative of [".claude", ".agents/scripts/gate.mjs"]) assert.equal(exists(project, relative), false, relative);
+    assert.doesNotMatch(output, /autonomy\.md/);
+    assert.doesNotMatch(checks.findBlock(read(project, "AGENTS.md")), /engineering-lead/);
+  });
+
+  test("the team's settings merge with the project's own, and leave with Claude Code", async () => {
+    write(project, ".claude/settings.json", JSON.stringify({
+      model: "opus",
+      permissions: { allow: ["Bash(npm test)"], deny: ["Bash(gh pr merge *)"] },
+      hooks: { PostToolUse: [{ matcher: "Edit", hooks: [{ type: "command", command: "npm run lint" }] }] },
+    }, null, 2));
+    assert.equal((await install()).code, 0);
+    let merged = settings();
+    assert.equal(merged.model, "opus");
+    assert.ok(merged.permissions.allow.includes("Bash(npm test)"));
+    assert.equal(merged.permissions.deny.filter((rule) => rule === "Bash(gh pr merge *)").length, 1);
+    assert.match(hookCommands(merged), /npm run lint/);
+    assert.match(hookCommands(merged), /hook verifier-stop/);
+    const again = await install();
+    assert.match(again.output, /: \d+ unchanged\./);
+
+    const { code, output } = await install("--cursor");
+    assert.equal(code, 0, output);
+    merged = settings();
+    assert.equal(merged.model, "opus");
+    assert.deepEqual(merged.permissions, { allow: ["Bash(npm test)"], deny: ["Bash(gh pr merge *)"] });
+    assert.doesNotMatch(hookCommands(merged), /gate\.mjs/);
+    assert.match(hookCommands(merged), /npm run lint/);
+    assert.equal(exists(project, ".claude/agents"), false);
+    assert.deepEqual(checks.check(project), []);
+  });
+
+  test("an entry removed by hand stays out until forced, and the checker reports it", async () => {
+    await install();
+    const edited = settings();
+    edited.hooks.SubagentStop = [];
+    write(project, ".claude/settings.json", JSON.stringify(edited, null, 2));
+    assert.match(checks.check(project).join("\n"), /lacks 1 of the agent team's entries/);
+    const { code, output } = await install();
+    assert.equal(code, 0, output);
+    assert.match(output, /removed by hand, so they stay out/);
+    assert.doesNotMatch(hookCommands(settings()), /verifier-stop/);
+    assert.deepEqual(checks.check(project), []);
+    await install("--force");
+    assert.match(hookCommands(settings()), /verifier-stop/);
+  });
+
+  test("a yes to the conflicts overwrites files but restores nothing the project removed", async () => {
+    await install();
+    const edited = settings();
+    edited.hooks.SubagentStop = [];
+    write(project, ".claude/settings.json", JSON.stringify(edited, null, 2));
+    write(project, ".agents/skills/tdd/SKILL.md", "changed by hand\n");
+    const { code, output } = await run(["install", project], { interactive: true, answers: { overwrite: true } });
+    assert.equal(code, 0, output);
+    assert.notEqual(read(project, ".agents/skills/tdd/SKILL.md"), "changed by hand\n");
+    assert.doesNotMatch(hookCommands(settings()), /verifier-stop/);
+  });
+
+  test("a fresh clone that ignores agent memory checks out", async () => {
+    write(project, ".gitignore", ".claude/agent-memory-local/\n");
+    await install();
+    fs.rmSync(path.join(project, ".claude/agent-memory-local"), { recursive: true });
+    assert.deepEqual(checks.check(project), []);
+  });
+
+  test("dropping Claude Code points out leftover memory and hooks", async () => {
+    await install();
+    write(project, ".claude/agent-memory-local/verifier/MEMORY.md", "notes\n");
+    const edited = settings();
+    edited.hooks.PreToolUse[0].hooks[0].timeout = 30;
+    write(project, ".claude/settings.json", JSON.stringify(edited, null, 2));
+    const { code, output } = await install("--cursor");
+    assert.equal(code, 0, output);
+    assert.match(output, /agent-memory-local\/ still holds/);
+    assert.match(output, /still has a hook that calls gate\.mjs/);
+  });
+
+  test("invalid settings are left alone with a note", async () => {
+    write(project, ".claude/settings.json", "{ not json");
+    const { output } = await install();
+    assert.match(output, /not valid JSON/);
+    assert.equal(read(project, ".claude/settings.json"), "{ not json");
+  });
+});
+
 describe("AGENTS.md and CLAUDE.md", () => {
   let dir;
   let project;
@@ -344,12 +496,12 @@ describe("AGENTS.md and CLAUDE.md", () => {
     const block = checks.findBlock(agents);
     assert.match(block, /## Agent workflow/);
     assert.ok(block.includes("When the board is missing or incomplete, or the fleet's files need an update, ask the "
-      + "user to run `npx skill-fleet@latest update --dry-run` and then `npx skill-fleet@latest update` in their own "
+      + "user to run `npx agent-fleet@latest update --dry-run` and then `npx agent-fleet@latest update` in their own "
       + "terminal. Do not run it yourself without the user's approval. If the user asks you to run it, run "
-      + "`npx skill-fleet@latest update --dry-run --yes` and show the user the plan it prints. Run "
-      + "`npx skill-fleet@latest update --yes` only after the user approves that exact plan, with the same flags"), block);
+      + "`npx agent-fleet@latest update --dry-run --yes` and show the user the plan it prints. Run "
+      + "`npx agent-fleet@latest update --yes` only after the user approves that exact plan, with the same flags"), block);
     assert.match(block, /Adding `--force`, which overwrites files changed by hand, needs its own approval\./);
-    assert.match(block, /Do not edit by hand the files that `\.agents\/skill-fleet\.json` records/);
+    assert.match(block, /Do not edit by hand the files that `\.agents\/agent-fleet\.json` records/);
     assert.match(block, /Put a project's own skill in its own folder under `\.agents\/skills\/`, and add nothing inside a fleet skill's folder or `\.agents\/references\/`\./);
     assert.match(output, /fill the TODOs in AGENTS\.md/);
     assert.equal(checks.findBlock(read(project, "CLAUDE.md")), "@AGENTS.md\n");
@@ -358,19 +510,19 @@ describe("AGENTS.md and CLAUDE.md", () => {
 
   test("an existing AGENTS.md keeps its content", async () => {
     fs.writeFileSync(path.join(project, "AGENTS.md"), "# Mine\n\nKeep this rule.\n");
-    for (const name of ["issue-tracker.md", "domain.md", "verification.md"]) {
+    for (const name of ["issue-tracker.md", "domain.md", "verification.md", "autonomy.md"]) {
       write(project, `docs/agents/${name}`, template(name).replaceAll("TODO", "Filled"));
     }
     const first = await install();
     let agents = read(project, "AGENTS.md");
-    assert.ok(agents.startsWith("# Mine\n\nKeep this rule.\n\n<!-- skill-fleet:begin"));
+    assert.ok(agents.startsWith("# Mine\n\nKeep this rule.\n\n<!-- agent-fleet:begin"));
     assert.doesNotMatch(first.output, /Next:/);
     const { code, output } = await install("--claude", "--cursor", "--kiro");
     assert.equal(code, 0, output);
     agents = read(project, "AGENTS.md");
     assert.match(checks.findBlock(agents), /`\.kiro\/skills\/`/);
     assert.ok(agents.startsWith("# Mine\n\nKeep this rule.\n"));
-    assert.equal(agents.split("skill-fleet:begin").length, 2);
+    assert.equal(agents.split("agent-fleet:begin").length, 2);
   });
 
   test("a hand-edited section blocks the update until forced", async () => {
@@ -379,7 +531,7 @@ describe("AGENTS.md and CLAUDE.md", () => {
     fs.writeFileSync(path.join(project, "AGENTS.md"), edited);
     const blocked = await install("--claude");
     assert.equal(blocked.code, 1);
-    assert.match(blocked.output, /AGENTS\.md: its skill-fleet section was edited by hand/);
+    assert.match(blocked.output, /AGENTS\.md: its agent-fleet section was edited by hand/);
     assert.equal(read(project, "AGENTS.md"), edited);
     assert.ok(exists(project, ".cursor"));
     assert.ok(checks.check(project).some((e) => e.includes("changed since install")));
@@ -410,7 +562,7 @@ describe("AGENTS.md and CLAUDE.md", () => {
     fs.writeFileSync(path.join(project, "CLAUDE.md"), "# Old Claude notes\n");
     await install();
     const claude = read(project, "CLAUDE.md");
-    assert.ok(claude.startsWith("<!-- skill-fleet:begin"));
+    assert.ok(claude.startsWith("<!-- agent-fleet:begin"));
     assert.ok(claude.endsWith("\n# Old Claude notes\n"));
   });
 
@@ -435,7 +587,7 @@ describe("AGENTS.md and CLAUDE.md", () => {
     await install();
     fs.writeFileSync(path.join(project, "CLAUDE.md"), "Nothing here.\n");
     const errors = checks.check(project);
-    assert.ok(errors.includes("the skill-fleet section in CLAUDE.md is missing. Reinstall to restore it."));
+    assert.ok(errors.includes("the agent-fleet section in CLAUDE.md is missing. Reinstall to restore it."));
     assert.ok(errors.some((e) => e.includes("does not import AGENTS.md")));
   });
 });
@@ -717,9 +869,9 @@ describe("GitHub setup", () => {
     const update = (...argv) => run(["update", project, ...argv], { github });
     const refused = await update("--yes");
     assert.equal(refused.code, 1, refused.output);
-    assert.match(refused.output, /The board recorded at the last installation, #1 "space-game Sprints", is closed\. To use it again, reopen it on GitHub and rerun skill-fleet\.\n/);
+    assert.match(refused.output, /The board recorded at the last installation, #1 "space-game Sprints", is closed\. To use it again, reopen it on GitHub and rerun agent-fleet\.\n/);
     assert.doesNotMatch(refused.output, /no longer linked/);
-    assert.match(refused.output, /skill-fleet does not replace it with a new board\. Nothing was written\. Reopen it on GitHub and rerun skill-fleet, or name another board with --board <number or title>\.\n/);
+    assert.match(refused.output, /agent-fleet does not replace it with a new board\. Nothing was written\. Reopen it on GitHub and rerun agent-fleet, or name another board with --board <number or title>\.\n/);
     const preview = await update("--dry-run", "--yes");
     assert.equal(preview.code, 1, preview.output);
     assert.match(preview.output, /The run would stop at the project board: The board recorded at the last installation, #1 "space-game Sprints", is closed/);

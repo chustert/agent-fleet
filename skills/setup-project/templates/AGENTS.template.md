@@ -1,6 +1,6 @@
 # {{project_name}}
 
-<!-- The skill-fleet installer created this file. Replace every TODO, or run the setup-project skill to fill them from the project. Everything outside the skill-fleet section belongs to this project. -->
+<!-- The agent-fleet installer created this file. Replace every TODO, or run the setup-project skill to fill them from the project. Everything outside the agent-fleet section belongs to this project. -->
 
 ## Project intent
 

@@ -1,6 +1,6 @@
 ---
 name: setup-project
-description: Adapt the skill fleet to a project by inspecting its repositories, GitHub tracker and board, components, platforms, verification commands, deployments, knowledge documents, boundaries, secret files, and the project's earlier skills, including any the fleet replaced, then writing the project profile in docs/agents/ that every other skill reads and tailoring the project's AGENTS.md and CLAUDE.md. Use after installing the fleet, when a skill reports a missing or TODO profile value, or when the project's structure, board, or commands change. Reads GitHub but never changes it.
+description: Adapt the agent fleet to a project by inspecting its repositories, GitHub tracker and board, components, platforms, verification commands, deployments, knowledge documents, boundaries, secret files, and the project's earlier skills, including any the fleet replaced, then writing the project profile in docs/agents/ that every other skill reads and tailoring the project's AGENTS.md and CLAUDE.md. Use after installing the fleet, when a skill reports a missing or TODO profile value, or when the project's structure, board, or commands change. Reads GitHub but never changes it.
 ---
 
 # Set up project
@@ -16,21 +16,25 @@ guessing. The profile is three files under `docs/agents/`, described in the
 - `verification.md`: each component's commands, evidence, and deployments;
   services that need approval; protected files; and review-worktree setup.
 
+When the installation includes the agent team (`.claude/agents/` exists), a
+fourth file, `autonomy.md`, records what the team's engineering lead may do
+without asking the user.
+
 Then tailor the project's instruction files. The fleet installer creates
 `AGENTS.md` from `templates/AGENTS.template.md` when the project has none, and
 `CLAUDE.md` to import it when Claude Code is one of the installed tools. In
-either file it owns only the section between the `skill-fleet:begin` and
-`skill-fleet:end` markers. Everything else belongs to the project.
+either file it owns only the section between the `agent-fleet:begin` and
+`agent-fleet:end` markers. Everything else belongs to the project.
 
 Invoking this skill authorizes reading the project, running read-only `git` and
-`gh` queries, creating or editing the three profile files, and replacing the
+`gh` queries, creating or editing the profile files, and replacing the
 `TODO` placeholders the installer left in `AGENTS.md`. Editing an existing
 profile file includes filling a value and adding a row, column, or section that
 its template has and the file lacks. It does not authorize editing any other
 file or any hand-written part of `AGENTS.md` or `CLAUDE.md`, editing or
 restoring a file the fleet installed, creating labels, boards, fields, or
 issues, running the fleet installer, installing tools, running builds or tests,
-or opening protected files. Never edit the skill-fleet section; the installer
+or opening protected files. Never edit the agent-fleet section; the installer
 rewrites it. Propose any other change as a diff, and apply it only after the
 user approves it. Such changes include an addition to a hand-written
 `AGENTS.md`, permission deny rules, removing or narrowing a project skill, and,
@@ -67,7 +71,7 @@ A project may arrive with skills, scripts, or agent documents of its own. When
 the installer would replace content it did not write, it reports a conflict: a
 file that "exists and was not installed by the fleet", a fleet file that
 "changed since the fleet installed it", or an `AGENTS.md` or `CLAUDE.md` whose
-skill-fleet section "was edited by hand". It overwrites them only with
+agent-fleet section "was edited by hand". It overwrites them only with
 `--force` or the user's consent. The previous version stays in Git when it was
 committed. A project can also keep its own skills beside the fleet's, such as a
 skill with a fleet skill's name in the folder of a tool that got no adapter.
@@ -79,16 +83,16 @@ instruction mentions skills, adapters, or skill checks.
 
 1. Find the replaced files. Use the conflicts the installer printed when the
    user still has its output. Otherwise read them from Git. Every committed
-   install and update changed `.agents/skill-fleet.json`, so
-   `git log --reverse --format=%H -- .agents/skill-fleet.json` lists them,
+   install and update changed `.agents/agent-fleet.json`, so
+   `git log --reverse --format=%H -- .agents/agent-fleet.json` lists them,
    oldest first. List the files each one changed with
    `git show --name-status --format= <commit>`. Only an `M` entry can have
    replaced content, and only for `AGENTS.md`, `CLAUDE.md`, or a path the
    commit's manifest lists under `files`. For each commit after the first,
    call the one before it in the list `<previous>`, and read its manifest
-   with `git show <previous>:.agents/skill-fleet.json`.
+   with `git show <previous>:.agents/agent-fleet.json`.
    - In the first commit, each such file replaced a project file, except
-     `AGENTS.md` and `CLAUDE.md`, which only gained the skill-fleet section.
+     `AGENTS.md` and `CLAUDE.md`, which only gained the agent-fleet section.
    - In a later commit, a file replaced project content when the manifest in
      `<previous>` does not list it under `files`, such as a project skill
      that a newer fleet version replaced with a skill of the same name. The
@@ -96,8 +100,8 @@ instruction mentions skills, adapters, or skill checks.
      file, because the project had edited the fleet's version by hand. Any
      other `M` entry is the fleet updating its own file.
    - In a later commit, `AGENTS.md` or `CLAUDE.md` lost content only when its
-     skill-fleet section, between the `skill-fleet:begin` and
-     `skill-fleet:end` markers, changed between `<previous>` and
+     agent-fleet section, between the `agent-fleet:begin` and
+     `agent-fleet:end` markers, changed between `<previous>` and
      `<commit>~1`. The installer keeps the rest of either file.
 
    When the installation is not committed yet, `git status` lists the changed
@@ -114,7 +118,7 @@ instruction mentions skills, adapters, or skill checks.
    beside the fleet's, and the rules about skills, adapters, and skill checks
    in the hand-written parts of `AGENTS.md` and `CLAUDE.md` and in any other
    document in `docs/agents/`. Step 9 compares those rules with the
-   skill-fleet section.
+   agent-fleet section.
 3. Collect the project facts they hold: commands and their working
    directories, paths, services, safety rules, board and status names, time
    zones, and the steps that gather runtime evidence.
@@ -159,15 +163,15 @@ user confirms it. Run read-only queries and record names, not IDs.
   --owner <owner> --format json` lists its `Status` options and iteration field.
   If the board is missing, unlinked, or lacks an option or the iteration field,
   do not repair it here. Ask the user to run
-  `npx skill-fleet@latest update --dry-run` and then
-  `npx skill-fleet@latest update` in their own terminal. The update creates or
+  `npx agent-fleet@latest update --dry-run` and then
+  `npx agent-fleet@latest update` in their own terminal. The update creates or
   repairs the project board on GitHub. Do not run it yourself without the
   user's approval. When the user asks you to run it, follow [Updating the
   installation](../../references/project-profile.md#updating-the-installation).
   Continue with the rest.
 - If `docs/agents/issue-tracker.md` predates the installer and names no board,
   take the board the installer set up from `github.board` in
-  `.agents/skill-fleet.json`: its `owner`, `number`, `title`, and `url`. The
+  `.agents/agent-fleet.json`: its `owner`, `number`, `title`, and `url`. The
   installer never changes an existing `docs/agents/issue-tracker.md`. Confirm
   the board with `gh project field-list <number> --owner <owner> --format json`,
   and record it in the `Project board` row as
@@ -302,6 +306,14 @@ lanes, or the engine's command line.
   `TODO`. Propose the renames and moved settings as a diff, and apply it only
   after the user approves. Keep every value the user wrote, and keep sections
   the template does not have.
+- Write `autonomy.md` only when the agent team is installed, and only with
+  the user's confirmation, because it grants the engineering lead standing
+  authorization. Start from the template, which lists the usual grants and the
+  actions that always go to the user. Fill `Cross-model review` with the
+  command of a model CLI from another family that the user has installed and
+  logged in, run read-only, or `None`. Never add a grant the user did not
+  confirm. Until the user confirms, leave the file missing, so the lead keeps
+  asking at every gate.
 - Keep the profile a configuration record, not a copy of the documentation.
   Link the architecture, contracts, and testing guides rather than restating
   them.
@@ -338,7 +350,7 @@ structure alone. Compare it with the sections of the template, and propose only
 the always-relevant instructions it lacks, as a diff for approval.
 
 Then compare the hand-written parts of `AGENTS.md` and `CLAUDE.md`, and any
-other document in `docs/agents/`, with the skill-fleet section. Look for a rule
+other document in `docs/agents/`, with the agent-fleet section. Look for a rule
 that contradicts the section, such as one to edit the skill adapters by hand or
 to run a checker other than `node .agents/scripts/check-skills.mjs`, and for a
 rule that points to a skill, script, or reference file the fleet replaced, such
@@ -375,18 +387,21 @@ Present a compact summary:
   proposed quality weighting;
 - what `AGENTS.md` now says about the project's intent, source of truth, and
   rules, and the source of each statement;
+- with the agent team: each grant `autonomy.md` would give the engineering
+  lead, the actions that always go to the user, the loop limits, and the
+  second-opinion command, for the user to confirm or narrow;
 - every remaining `TODO`, in the profile or in `AGENTS.md`, and the question
   that would resolve it;
 - the rows, columns, and sections added to existing profile files;
 - proposed changes that need approval, as diffs awaiting approval: renamed
   rows, columns, or sections and moved settings in an existing profile file,
   deny rules, additions to a hand-written `AGENTS.md`, hand-written rules that
-  contradict the skill-fleet section or point to replaced files, and project
+  contradict the agent-fleet section or point to replaced files, and project
   skills to remove or narrow because they share a fleet skill's name or job.
 
 Ask the user to confirm or correct the judgement calls: routing ownership,
-fallback repository, quality weighting, the project intent, and anything
-marked proposed. Apply the corrections.
+fallback repository, quality weighting, the project intent, the autonomy
+grants, and anything marked proposed. Apply the corrections.
 
 ## 11. Check the installation
 

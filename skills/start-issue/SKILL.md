@@ -335,8 +335,8 @@ to the started status:
    usually `In progress`. Never hard-code project, field, item, or option
    identifiers. If the settings name no board, or GitHub no longer has it, keep
    the local branches, report that the status was not synchronized, and ask the
-   user to run `npx skill-fleet@latest update --dry-run` and then
-   `npx skill-fleet@latest update` in their own terminal. The update creates or
+   user to run `npx agent-fleet@latest update --dry-run` and then
+   `npx agent-fleet@latest update` in their own terminal. The update creates or
    repairs the project board on GitHub. Do not run it yourself without the
    user's approval. When the user asks you to run it, follow [Updating the
    installation](../../references/project-profile.md#updating-the-installation).

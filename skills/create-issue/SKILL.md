@@ -290,8 +290,8 @@ Resolve all required metadata before creating the issue:
    the new-issue lifecycle role, usually `Todo`. Resolve every project, field,
    and option ID dynamically; never hard-code one. The board is required: if the
    settings name none, or GitHub no longer has it, stop and ask the user to run
-   `npx skill-fleet@latest update --dry-run` and then
-   `npx skill-fleet@latest update` in their own terminal. The update creates or
+   `npx agent-fleet@latest update --dry-run` and then
+   `npx agent-fleet@latest update` in their own terminal. The update creates or
    repairs the project board on GitHub. Do not run it yourself without the
    user's approval. When the user asks you to run it, follow [Updating the
    installation](../../references/project-profile.md#updating-the-installation).

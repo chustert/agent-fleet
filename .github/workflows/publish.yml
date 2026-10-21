@@ -37,17 +37,17 @@ jobs:
       - name: Stage the release on npm
         run: |
           version=$(node -p "require('./package.json').version")
-          if npm view "skill-fleet@$version" version >/dev/null 2>&1; then
-            echo "skill-fleet@$version is already published."
+          if npm view "agent-fleet@$version" version >/dev/null 2>&1; then
+            echo "agent-fleet@$version is already published."
           else
             npm stage publish
             {
-              echo "## skill-fleet@$version is staged on npm"
+              echo "## agent-fleet@$version is staged on npm"
               echo
               echo "It goes live only after a maintainer approves it with two-factor authentication:"
               echo
               echo "- on npmjs.com, in the package's **Staged Packages** tab, or"
-              echo "- with \`npm stage list skill-fleet\`, then \`npm stage approve <stage-id>\`."
+              echo "- with \`npm stage list agent-fleet\`, then \`npm stage approve <stage-id>\`."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 

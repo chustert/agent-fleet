@@ -1,18 +1,19 @@
 {
-  "name": "skill-fleet",
-  "version": "1.5.1",
-  "description": "Workflow skills for coding agents that work in any project: plan, start, implement, verify, and review GitHub issues.",
+  "name": "agent-fleet",
+  "version": "2.0.0",
+  "description": "Workflow skills and a Claude Code agent team that plan, build, verify and review GitHub issues, for any project.",
   "license": "MIT",
   "author": "Christian Hustert",
   "type": "module",
   "bin": {
-    "skill-fleet": "bin/skill-fleet.mjs"
+    "agent-fleet": "bin/agent-fleet.mjs"
   },
   "files": [
     "bin/",
     "lib/",
     "skills/",
     "references/",
+    "agents/",
     "README.md",
     "LICENSE"
   ],
@@ -24,11 +25,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/chustert/skill-fleet.git"
+    "url": "git+https://github.com/chustert/agent-fleet.git"
   },
-  "homepage": "https://github.com/chustert/skill-fleet#readme",
+  "homepage": "https://github.com/chustert/agent-fleet#readme",
   "bugs": {
-    "url": "https://github.com/chustert/skill-fleet/issues"
+    "url": "https://github.com/chustert/agent-fleet/issues"
   },
   "keywords": [
     "agent-skills",
@@ -40,7 +41,10 @@
     "opencode",
     "skills",
     "workflow",
-    "github"
+    "github",
+    "agents",
+    "subagents",
+    "verification"
   ],
   "publishConfig": {
     "access": "public"

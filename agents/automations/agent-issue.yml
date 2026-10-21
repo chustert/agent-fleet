@@ -1,0 +1,45 @@
+# Hands an issue to the cloud engineering-lead routine when an allowed person
+# adds the `agent-ready` label.
+#
+# Setup:
+#   1. Create a routine at claude.ai/code/routines with this repository and the
+#      prompt in `.claude/automations/issue-intake.md`. Add an API trigger, copy its URL,
+#      and generate a token.
+#   2. Add repository secrets CLAUDE_ROUTINE_URL and CLAUDE_ROUTINE_TOKEN.
+#   3. Create the `agent-ready` label.
+#   4. Add a repository variable AGENT_ALLOWED_ACTORS: comma-separated GitHub
+#      logins allowed to hand issues to the agents, such as `<login>`.
+#
+# The routine API is a research preview; the beta header below may change.
+# Use this only for components the cloud environment can build and drive (a
+# web app or service). For iOS or anything that needs your machine, keep work
+# local and let the lead pick up labelled issues instead, as `.claude/automations/README.md` describes.
+name: Hand labelled issue to the engineering lead
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  fire:
+    if: >-
+      github.event.label.name == 'agent-ready' &&
+      contains(format(',{0},', vars.AGENT_ALLOWED_ACTORS), format(',{0},', github.event.sender.login))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire the issue-intake routine
+        env:
+          ROUTINE_URL: ${{ secrets.CLAUDE_ROUTINE_URL }}
+          ROUTINE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_TOKEN }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+        run: |
+          payload=$(jq -n --arg url "$ISSUE_URL" '{text: ("Issue to work on: " + $url)}')
+          curl --fail-with-body -sS -X POST "$ROUTINE_URL" \
+            -H "Authorization: Bearer $ROUTINE_TOKEN" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "Content-Type: application/json" \
+            -d "$payload"
