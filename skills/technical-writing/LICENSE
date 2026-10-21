@@ -1,6 +1,6 @@
 The technical-writing skill is adapted from the pstack plugin by Lauren Tan:
 https://github.com/cursor/plugins/tree/99559f2f52047978602ef365589275831e76af07/pstack/skills/technical-writing
-The changes point its links at the skill fleet's references and remove repository-specific rules.
+The changes point its links at the agent fleet's references and remove repository-specific rules.
 
 MIT License
 

@@ -230,8 +230,8 @@ Immediately before creating or updating the PR:
    than adding it to a board or guessing; report the unresolved status clearly
    while keeping the verified PR intact. If the settings name no board, or
    GitHub no longer has it, say so and ask the user to run
-   `npx skill-fleet@latest update --dry-run` and then
-   `npx skill-fleet@latest update` in their own terminal. The update creates or
+   `npx agent-fleet@latest update --dry-run` and then
+   `npx agent-fleet@latest update` in their own terminal. The update creates or
    repairs the project board on GitHub. Do not run it yourself without the
    user's approval. When the user asks you to run it, follow [Updating the
    installation](../../references/project-profile.md#updating-the-installation).

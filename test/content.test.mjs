@@ -21,18 +21,18 @@ const ALLOWED_ZONES = new Set(["Europe/Berlin"]);
 
 /** Files the package ships, with forward-slash paths relative to the fleet. */
 function shippedFiles() {
-  return ["bin", "lib", "skills", "references"].flatMap((base) =>
+  return ["bin", "lib", "skills", "references", "agents"].flatMap((base) =>
     checks.listFiles(path.join(ROOT, base))
-      .filter((file) => /\.(md|mjs|yaml)$/.test(file))
+      .filter((file) => /\.(md|mjs|yaml|yml|json)$/.test(file))
       .map((file) => `${base}/${file}`));
 }
 
 // The update rule, as "Updating the installation" in the profile reference states it. Every mention of the
 // update repeats the user's run and the approval rule, and states or links the agent's steps.
-const USER_RUN = "`npx skill-fleet@latest update --dry-run` and then `npx skill-fleet@latest update` in their own terminal";
+const USER_RUN = "`npx agent-fleet@latest update --dry-run` and then `npx agent-fleet@latest update` in their own terminal";
 const APPROVAL = "without the user's approval";
-const AGENT_STEPS = ["`npx skill-fleet@latest update --dry-run --yes`", "approves that exact plan",
-  "`npx skill-fleet@latest update --yes`", "same flags", "`--force`", "needs its own approval"];
+const AGENT_STEPS = ["`npx agent-fleet@latest update --dry-run --yes`", "approves that exact plan",
+  "`npx agent-fleet@latest update --yes`", "same flags", "`--force`", "needs its own approval"];
 const UPDATE_LINK = /\(\.\.\/\.\.\/references\/project-profile\.md#updating-the-installation\)|"Updating the installation" in `\.agents\/references\/project-profile\.md`/;
 
 /** The paragraphs and list items of Markdown text, each on one line. */
@@ -44,7 +44,7 @@ function paragraphs(text) {
 function updateRuleGaps(paragraph, { code = true } = {}) {
   const plain = (phrase) => (code ? phrase : phrase.replaceAll("`", ""));
   // The bare command, without --dry-run or --yes, comes only as the second half of the user's run.
-  const bare = (code ? /`npx skill-fleet@latest update`/g : /npx skill-fleet@latest update(?! --)/g);
+  const bare = (code ? /`npx agent-fleet@latest update`/g : /npx agent-fleet@latest update(?! --)/g);
   const gaps = [];
   if (paragraph.split(plain(USER_RUN)).length - 1 !== (paragraph.match(bare) ?? []).length) {
     gaps.push("the user's run with its dry run first");
@@ -147,11 +147,11 @@ describe("content", () => {
     const mentions = [];
     for (const file of shippedFiles().filter((name) => name.endsWith(".md"))) {
       for (const paragraph of paragraphs(fs.readFileSync(path.join(ROOT, file), "utf8"))) {
-        if (paragraph.includes("skill-fleet@latest update")) mentions.push({ where: file, paragraph });
+        if (paragraph.includes("agent-fleet@latest update")) mentions.push({ where: file, paragraph });
       }
     }
     for (const paragraph of paragraphs(agentsBlock(["claude"]))) {
-      if (paragraph.includes("skill-fleet@latest update")) mentions.push({ where: "agentsBlock()", paragraph });
+      if (paragraph.includes("agent-fleet@latest update")) mentions.push({ where: "agentsBlock()", paragraph });
     }
     assert.ok(mentions.length >= 12, `found ${mentions.length} mentions`);
     for (const { where, paragraph } of mentions) {
@@ -182,8 +182,8 @@ describe("content", () => {
 
   test("the package ships what the installer reads", () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
-    for (const entry of ["bin/", "lib/", "skills/", "references/"]) assert.ok(pkg.files.includes(entry), entry);
-    assert.equal(pkg.bin["skill-fleet"], "bin/skill-fleet.mjs");
-    assert.equal(pkg.repository.url, "git+https://github.com/chustert/skill-fleet.git");
+    for (const entry of ["bin/", "lib/", "skills/", "references/", "agents/"]) assert.ok(pkg.files.includes(entry), entry);
+    assert.equal(pkg.bin["agent-fleet"], "bin/agent-fleet.mjs");
+    assert.equal(pkg.repository.url, "git+https://github.com/chustert/agent-fleet.git");
   });
 });

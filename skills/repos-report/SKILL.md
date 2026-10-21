@@ -30,8 +30,8 @@ them to flags:
 | Sprint time zone | `--timezone <IANA zone>`, on every run |
 
 The board is required: if the settings name none, say so and ask the user to
-run `npx skill-fleet@latest update --dry-run` and then
-`npx skill-fleet@latest update` in their own terminal. The update creates or
+run `npx agent-fleet@latest update --dry-run` and then
+`npx agent-fleet@latest update` in their own terminal. The update creates or
 repairs the project board on GitHub. Do not run it yourself without the user's
 approval. When the user asks you to run it, follow [Updating the
 installation](../../references/project-profile.md#updating-the-installation).
@@ -82,8 +82,8 @@ date can differ from the team's and pick the wrong sprint.
 When `sprint.error` asks for the `read:project` scope, tell the user to run
 `gh auth refresh -s read:project`. When it says the board is missing, is
 ambiguous, or has no iteration field, ask the user to run
-`npx skill-fleet@latest update --dry-run` and then
-`npx skill-fleet@latest update` in their own terminal. The update creates or
+`npx agent-fleet@latest update --dry-run` and then
+`npx agent-fleet@latest update` in their own terminal. The update creates or
 repairs the project board on GitHub. Do not run it yourself without the user's
 approval. When the user asks you to run it, follow [Updating the
 installation](../../references/project-profile.md#updating-the-installation).

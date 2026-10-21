@@ -1,14 +1,15 @@
 # Project profile
 
 The fleet's skills describe the workflow. Everything that differs between
-projects lives in the project itself, in three files under `docs/agents/`.
+projects lives in the project itself, in three files under `docs/agents/`,
+plus a fourth for projects with the agent team.
 Skills read those files instead of naming a repository, board, command, or
 platform. The `setup-project` skill creates and fills them.
 
 ## What every project has
 
 The workflow is opinionated about where work lives. Every project that uses it
-has all of the following, and the installer (`npx skill-fleet`) sets them up:
+has all of the following, and the installer (`npx agent-fleet`) sets them up:
 
 - **A GitHub repository.** Issues and pull requests live there. The installer
   stops when the project folder is not one.
@@ -26,15 +27,15 @@ has all of the following, and the installer (`npx skill-fleet`) sets them up:
 ## Updating the installation
 
 When a skill finds the board missing or incomplete, it asks the user to run
-`npx skill-fleet@latest update --dry-run` and then
-`npx skill-fleet@latest update` in their own terminal. The update creates or
+`npx agent-fleet@latest update --dry-run` and then
+`npx agent-fleet@latest update` in their own terminal. The update creates or
 repairs the project board on GitHub and updates the fleet's files, so an agent
 never runs it, or `install`, without the user's approval. If the user asks the
 agent to run the update, the agent runs
-`npx skill-fleet@latest update --dry-run --yes` and shows the user the plan it
+`npx agent-fleet@latest update --dry-run --yes` and shows the user the plan it
 prints. If that dry run fails, the agent shows the user why and stops. Only
 after the user approves that exact plan does the agent run
-`npx skill-fleet@latest update --yes`, with the same flags as the dry run. When
+`npx agent-fleet@latest update --yes`, with the same flags as the dry run. When
 the user makes a choice, such as the board to use or the tools that get
 adapters, the agent passes it to both runs as a flag, such as
 `--board <number>` or `--tools claude,cursor`. Adding `--force`, which
@@ -54,14 +55,15 @@ repository keeps its own Git history.
 
 | File | Owned by | Holds |
 | --- | --- | --- |
-| `AGENTS.md` | project, except one section | Always-relevant instructions, working rules, and safety rules. The profile does not restate it. The fleet installer creates it when missing and maintains only the section between the `skill-fleet:begin` and `skill-fleet:end` markers. |
+| `AGENTS.md` | project, except one section | Always-relevant instructions, working rules, and safety rules. The profile does not restate it. The fleet installer creates it when missing and maintains only the section between the `agent-fleet:begin` and `agent-fleet:end` markers. |
 | `CLAUDE.md` | project, except one section | Imports `AGENTS.md` for Claude Code with `@AGENTS.md`. The installer creates it, or adds the import, when Claude Code is an installed tool. |
 | `docs/agents/issue-tracker.md` | project | Tracker settings, the project board and its lifecycle statuses, branch conventions, and the routing table that maps each component to its repository, local path, and responsibilities. The installer creates it with every setting it reads from GitHub; `setup-project` adds the routing and labels. |
 | `docs/agents/domain.md` | project | The knowledge reading order, glossary, architecture, contracts document, known boundaries and how to check each one locally, ADR location, and the project's quality weighting. |
 | `docs/agents/verification.md` | project | For every component: platform, test harness, focused and final commands, local run, runtime evidence for each entry point, prerequisites, and what a merge or release deploys. Also the online and paid services that need approval, protected files, and review-worktree setup. |
+| `docs/agents/autonomy.md` | project | Only with the agent team, which Claude Code projects get: the user's standing authorization, which approval gates the engineering lead may answer on the user's behalf and which always go to the user, the loop limits, and the command for the cross-model second opinion. Without it, the lead asks the user at every gate. `setup-project` writes it after the user confirms each grant. |
 | `.agents/references/` | fleet | Shared models every project uses: this file, the software-quality characteristics, the GitHub reference rules, and the platform guides. Change them in the fleet and reinstall; do not edit them in a project. |
 
-The templates for the three profile files and for a new `AGENTS.md` live in
+The templates for the profile files and for a new `AGENTS.md` live in
 `.agents/skills/setup-project/templates/`.
 
 ## Vocabulary
