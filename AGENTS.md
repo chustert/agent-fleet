@@ -56,10 +56,22 @@ The sprint and `repos-report` scripts call GitHub; test them against a real boar
 
 ## Releasing
 
+The package is `@chustert/agent-fleet` on npm. The maintainer published 2.2.0 by hand, because npm sets up trusted publishing only for a package that already exists. Every later version goes through `publish.yml`.
+
+### Set up trusted publishing once
+
+The maintainer does this just before pushing the next version's tag, because npm drops a new trusted-publisher setup that has not published within 2 days.
+
+1. On npmjs.com, open **Packages**, then `@chustert/agent-fleet`, **Settings**, and **Trusted publishing**, and choose **GitHub Actions**.
+2. Enter `chustert` as the organization or user, `agent-fleet` as the repository, and `publish.yml` as the workflow filename, and leave the environment empty. Leave `npm publish` and `npm dist-tag` unticked under the allowed actions. `npm stage publish` is always allowed, so the workflow can stage a version but never put one live.
+3. Under **Settings**, then **Publishing access**, choose **Require two-factor authentication and disallow tokens**. Trusted publishing keeps working, and a leaked token can no longer publish.
+
+### Release a version
+
 1. Bump `version` in `package.json` and merge the change to `main`.
-2. Before the first release under the scoped name, the maintainer configures this repository's `publish.yml` as the trusted publisher of `@chustert/agent-fleet` on npmjs.com.
-3. Tag the merge commit as `v<version>`, such as `v1.2.0`, and push the tag. `publish.yml` tests the package, checks that the tag matches the version, stages the version on npm through trusted publishing, and creates the GitHub release.
-4. The maintainer approves the staged version with two-factor authentication, in the package's **Staged Packages** tab on npmjs.com or with `npm stage approve <stage-id>`. Only then does it go live. Never approve a staged version on the maintainer's behalf.
+2. Tag the merge commit as `v<version>`, such as `v2.3.0`, and push the tag. `publish.yml` tests the package, checks that the tag matches the version, stages the version on npm through trusted publishing, and creates the GitHub release. When the version is already on npm, it skips staging and only creates the release.
+3. The maintainer approves the staged version with two-factor authentication, in the package's **Staged Packages** tab on npmjs.com or with `npm stage list @chustert/agent-fleet` and `npm stage approve <stage-id>`. Only then does it go live. Never approve a staged version on the maintainer's behalf.
+4. Check the live version with `npm view @chustert/agent-fleet version`. The registry can take a few minutes to show it.
 
 ## Working rules
 
