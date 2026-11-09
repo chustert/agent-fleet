@@ -215,8 +215,11 @@ Brief the subagent with:
 - the commands you ran and their results, and the runtime observations with
   their artifact paths, so that `pr-review` can reuse the evidence that fits
   its checks; and
-- the limits: review only, change nothing, post nothing, contact no online
-  service, and report back any check that needs approval.
+- the limits: review only; change nothing in any checkout, post nothing,
+  contact no online service, and report back any check that needs approval.
+  The subagent may create a temporary review worktree outside the checkout
+  with `git worktree add --detach`, build and run tests there as `pr-review`
+  describes, and remove it afterwards.
 
 Leave out the acceptance matrix verdicts, your view of the code, and anything
 said about why the code was written as it was. `pr-review` reaches its own

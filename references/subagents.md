@@ -104,7 +104,9 @@ A subagent gets no permission that the skill which started it does not have.
 State the limits in the brief, because the subagent cannot see the skill that
 started it:
 
-- what it may change, which for every task in the table above is nothing;
+- what it may change, which for every task in the table above is nothing,
+  apart from a temporary review worktree outside the checkout, where a review
+  may build and run tests as `pr-review` describes;
 - that it must not commit, push, post to GitHub, create or edit issues, or move
   board items, even when the skill it follows would otherwise allow that;
 - that it must not contact an online, hosted, or paid service, apart from the

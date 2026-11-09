@@ -10,7 +10,7 @@ The agent-fleet installer creates this file and fills every tracker setting it c
 
 | Setting | Value |
 | --- | --- |
-| Default repository | TODO: `owner/repo`. A bare issue number refers to this repository. |
+| Default repository | TODO: `owner/repo`. A bare issue number refers to this repository. In a workspace of several repositories, `None` means a bare issue number is ambiguous, and skills ask which repository it belongs to. |
 | Owner type | TODO: `Organization` or `User`. GitHub issue types exist only for organizations. |
 | Issue types | TODO: `Resolve from GitHub` when the organization uses them, otherwise `None`. |
 | Fallback repository | TODO: where a new issue goes when its owning component is unclear. |
@@ -19,6 +19,7 @@ The agent-fleet installer creates this file and fills every tracker setting it c
 | Lifecycle statuses | TODO: new → `Todo`; started → `In progress`; in review → `In review`; done → `Done`. |
 | Iteration field | TODO: the iteration field's name, usually `Sprint`. |
 | Sprint time zone | TODO: an IANA time zone, such as `Europe/Berlin`. |
+| Sprint report scope | `Routing table`: sprint reports cover the repositories in the routing table. `All repositories of the owner` makes them cover every repository the board's owner has. |
 | Default base branch | TODO: `main`. |
 | Branch format | `<category>/<issue-number>-<slug>`, such as `feature/12-export-button`. |
 | Labels | Use existing labels only. Typical mapping: TODO defect → `bug`, new capability → `enhancement`, documentation → `documentation`. |

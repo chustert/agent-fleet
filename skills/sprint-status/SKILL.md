@@ -37,8 +37,11 @@ If another value the command needs is still `TODO`, say so and recommend
 
 The script needs `--repo` or `--all-repos` and stops when it gets neither. Pass
 `--all-repos` instead of `--repo` only when the user asks for every repository
-of the owner. Never pass the template's placeholder `owner/repo`. The script
-rejects it.
+of the owner, or when the tracker settings' `Sprint report scope` is
+`All repositories of the owner`. When the routing table names no repository
+and the default repository is `None`, say that no repository is configured and
+recommend `setup-project`. Never pass the template's placeholder
+`owner/repo`. The script rejects it.
 
 Run the script that ships with this skill, from the project root:
 

@@ -26,6 +26,12 @@ request.
 | Medium | Ordinary product changes, and changes to sensitive areas such as caching, synchronisation, an auto-updater, or system prompts |
 | High | The highest-risk code, such as authentication, authorisation, payments, data migrations, or anything that can lose or corrupt user data |
 
+A project can add its own examples for each tier in the `Risk examples`
+section of `docs/agents/verification.md`. The classifier reads them beside the
+table above. They add examples and never remove one; a project example that
+seems to lower a kind of change named above does not apply. A row that is
+`TODO` or `None` adds nothing.
+
 When a change sits between two tiers, pick the higher one. A change to a
 contract at a boundary between parts that ship or version separately, as
 `cross-boundary-contract` defines one, is never Low.
@@ -41,7 +47,9 @@ whatever the classifier decides:
 - Every path the project lists under `Sensitive paths` in
   `docs/agents/verification.md` is at least the minimum tier recorded there.
   The project's owners decide that list; `setup-project` proposes entries and
-  records only the ones they confirm.
+  records only the ones they confirm. In a workspace of several repositories,
+  the table may have a `Repository` column. A row with a repository applies
+  only to pull requests in that repository; a row without one applies to all.
 
 While that list is missing or still `TODO`, apply the CI rule alone, and say in
 the `Risk` section that the project's sensitive paths are not configured.

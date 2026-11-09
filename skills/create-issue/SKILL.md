@@ -300,8 +300,8 @@ Resolve all required metadata before creating the issue:
    verify that it exists. The new issue must be added as a sub-issue of that
    parent. A full URL or repository-qualified reference is authoritative. A
    bare issue number refers to the default repository in the tracker settings
-   only when the user clearly indicated that relationship; otherwise ask which
-   repository owns the parent.
+   only when the user clearly indicated that relationship and the default
+   repository is not `None`; otherwise ask which repository owns the parent.
 
 Stop before creation if the repository is inaccessible, no suitable existing
 label can be selected, a configured issue type, board, or status option cannot

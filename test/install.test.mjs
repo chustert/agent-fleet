@@ -694,6 +694,9 @@ describe("GitHub setup", () => {
     assert.match(tracker, /^\| Sprint time zone \| `Europe\/Berlin`\. \|$/m);
     assert.match(tracker, /^\| Owner type \| `User`\. \|$/m);
     assert.match(tracker, /^## Routing/m);
+    // A single repository gets working defaults for the workspace settings, not a TODO the sprint skills stop on.
+    assert.match(tracker, /^\| Default repository \| `acme\/space-game`\. A bare issue number refers to this repository\. \|$/m);
+    assert.match(tracker, /^\| Sprint report scope \| `Routing table`: /m);
   });
 
   test("a second install reuses the board and changes nothing on GitHub", async () => {
