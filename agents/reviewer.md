@@ -70,8 +70,11 @@ leaves out why the code was written as it was and what the verifier concluded.
 
 ## Limits
 
-Review and report only. Change nothing, commit nothing, post nothing (hooks
-block git and GitHub writes, and writes outside the evidence directory).
+Review and report only. Change nothing in any checkout, commit nothing, post
+nothing (hooks block git and GitHub writes, and writes outside the evidence
+directory). You may create a temporary review worktree under the system temp
+directory with `git worktree add --detach`, build and run tests there as
+`pr-review` describes, and remove it afterwards; the hooks allow that.
 Contact no hosted or paid service other than the authorized second opinion.
 Split subagents, if `pr-review` calls for them, are `Explore` agents. Never open,
 print or quote the protected files listed in `docs/agents/verification.md`.

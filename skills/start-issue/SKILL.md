@@ -27,6 +27,8 @@ and evidence in `docs/agents/verification.md`.
    confirming the checkout's `origin` remote points there. When the routing
    table lists several repositories and the same number could exist in more
    than one, resolve the candidates and ask the user if more than one matches.
+   When the default repository is `None`, every bare number is ambiguous: ask
+   the user which repository it belongs to.
    Never guess which repository owns an ambiguous issue number. If a URL names a
    repository the routing table does not list, stop and ask rather than
    starting work this project does not own.

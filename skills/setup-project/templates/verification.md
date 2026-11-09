@@ -46,11 +46,21 @@ A protected file listed here may be symlinked into a new worktree of the reposit
 
 ## Sensitive paths
 
-A pull request that touches one of these paths states at least the minimum risk tier recorded here, as `.agents/references/pr-risk-tiers.md` describes. CI workflow files are always at least Medium and need no row. Owners decide this list.
+A pull request that touches one of these paths states at least the minimum risk tier recorded here, as `.agents/references/pr-risk-tiers.md` describes. CI workflow files are always at least Medium and need no row. Owners decide this list. In a workspace of several repositories, add a `Repository` column after `Path`: a row with a repository applies only to that repository's pull requests, and a row without one applies to all of them.
 
 | Path | Minimum tier | Why |
 | --- | --- | --- |
 | TODO: such as `db/migrations/**` | TODO: `Medium` or `High` | TODO: such as "a merge applies migrations to production" |
+
+## Risk examples
+
+This project's own examples for each risk tier, which the risk classifier reads beside the general examples in `.agents/references/pr-risk-tiers.md`. They describe kinds of change, not paths; a path that always needs a tier belongs under `Sensitive paths`. Owners decide them.
+
+| Tier | Examples in this project |
+| --- | --- |
+| Low | TODO: such as "copy and translation changes" |
+| Medium | TODO: such as "offline sync and local storage" |
+| High | TODO: such as "row-level security policies" |
 
 ## Review worktree setup
 

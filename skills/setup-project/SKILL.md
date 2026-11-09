@@ -191,6 +191,13 @@ user confirms it. Run read-only queries and record names, not IDs.
 - The fallback repository starts as the default repository. In a workspace of
   several repositories, propose where issues with an unclear owner belong, and
   the rule for work that spans components; the user confirms.
+- In a workspace of several repositories, ask whether a bare issue number
+  should still refer to the default repository. When the user says it is
+  ambiguous, record `None` in `Default repository`, and skills ask which
+  repository a bare number belongs to.
+- Keep `Sprint report scope` at `Routing table` unless the user wants sprint
+  reports to cover every repository the owner has, including repositories the
+  routing table does not list. Then record `All repositories of the owner`.
 
 ## 4. Map components and platforms
 
@@ -266,8 +273,15 @@ lanes, or the engine's command line.
   database migrations, authentication and permission code, payment code,
   release and signing configuration, and paths the contracts document or the
   `Deploys` rows show reach production on merge. Leave out CI workflow files;
-  the risk tiers already cover them. Record only the entries the user
-  confirms, and write `None` only when the user confirms there are none.
+  the risk tiers already cover them. In a workspace of several repositories,
+  add the `Repository` column for rows that belong to one repository. Record
+  only the entries the user confirms, and write `None` only when the user
+  confirms there are none.
+- Risk examples: propose this project's own examples for each risk tier, from
+  kinds of change the project's documents, earlier skills, and incidents treat
+  as riskier or safer than the general examples in the
+  [risk tiers](../../references/pr-risk-tiers.md). Record only the examples
+  the user confirms, and write `None` for a tier the user gives no examples.
 - Review-worktree setup: which ignored files a fresh worktree needs, and which
   dependency directories can be reused when a pull request does not change the
   lockfile.

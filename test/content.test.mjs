@@ -135,10 +135,27 @@ describe("content", () => {
     const verification = fs.readFileSync(path.join(templates, "verification.md"), "utf8");
     assert.match(verification, /^\| Deploys \| /m);
     assert.match(verification.slice(verification.indexOf("## Sensitive paths")), /^\| Path \| Minimum tier \| Why \|$/m);
+    const riskExamples = verification.slice(verification.indexOf("## Risk examples")).split(/\n## /)[0];
+    assert.match(riskExamples, /^\| Tier \| Examples in this project \|$/m);
+    for (const tier of ["Low", "Medium", "High"]) assert.match(riskExamples, new RegExp(`^\\| ${tier} \\| TODO`, "m"), tier);
+    const tracker = fs.readFileSync(path.join(templates, "issue-tracker.md"), "utf8");
+    // Optional workspace settings default to what a single repository needs.
+    assert.match(tracker, /^\| Sprint report scope \| `Routing table`: /m);
+    assert.match(tracker, /^\| Default repository \| TODO: .*`None` means a bare issue number is ambiguous/m);
+    const tiers = fs.readFileSync(path.join(ROOT, "references/pr-risk-tiers.md"), "utf8");
+    assert.ok(tiers.includes("`Risk examples`") && tiers.includes("`Repository` column"), "the risk tiers read both");
     for (const [name, field] of [["cross-boundary-contract", "Local check"], ["cross-boundary-contract", "Deploys"],
-      ["verify-work", "Local check"], ["prepare-pr", "Deploys"], ["prepare-pr", "Sensitive paths"]]) {
+      ["cross-boundary-contract", "Boundaries"], ["verify-work", "Local check"], ["prepare-pr", "Deploys"],
+      ["prepare-pr", "Sensitive paths"], ["prepare-pr", "Risk examples"], ["prepare-pr", "Repository"],
+      ["sprint-status", "Sprint report scope"], ["sprint-recap", "Sprint report scope"], ["setup-project", "Sprint report scope"],
+      ["setup-project", "Default repository"]]) {
       const text = fs.readFileSync(path.join(ROOT, "skills", name, "SKILL.md"), "utf8");
       assert.ok(text.includes(`\`${field}\``), `${name} reads ${field}`);
+    }
+    // Skills that resolve a bare issue number ask instead of guessing when the default repository is `None`.
+    for (const [name, phrase] of [["start-issue", "default repository is `None`"], ["create-issue", "default repository is not `None`"]]) {
+      const text = fs.readFileSync(path.join(ROOT, "skills", name, "SKILL.md"), "utf8").replace(/\s+/g, " ");
+      assert.ok(text.includes(phrase), `${name}: ${phrase}`);
     }
   });
 

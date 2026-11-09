@@ -194,7 +194,7 @@ Invoke a skill as `/name` in Claude Code and Cursor, or `$name` in Codex.
 | `create-issue` | Creates a grounded issue in the right repository, with existing labels and the board's first status. | `/create-issue Create an issue for: [problem, expected behaviour, and reproduction steps].` | Cheap model, such as Grok 4.6 or GPT-5.6-Luna |
 | `to-spec` | Turns the current discussion into a written specification. | `/to-spec` | High-tier model |
 
-The sprint scripts cover the repositories in the routing table of `docs/agents/issue-tracker.md`, or its `Default repository` while the table has no `Repository` column or every row's `Component` is still `TODO`. They never fall back to every repository the owner has; `--all-repos` asks for that explicitly. The skills pass the profile's `Sprint time zone`. When it is missing, each script warns and records `timezoneDefaulted` in its output.
+The sprint scripts cover the repositories in the routing table of `docs/agents/issue-tracker.md`, or its `Default repository` while the table has no `Repository` column or every row's `Component` is still `TODO`. They never fall back to every repository the owner has; `--all-repos` asks for that explicitly, and so does the tracker setting `Sprint report scope` set to `All repositories of the owner`, for a workspace whose activity spreads beyond the routing table. In a workspace, `Default repository` can be `None`, so that a bare issue number is treated as ambiguous and the skills ask which repository it belongs to. The skills pass the profile's `Sprint time zone`. When it is missing, each script warns and records `timezoneDefaulted` in its output.
 
 ### Task workflow
 

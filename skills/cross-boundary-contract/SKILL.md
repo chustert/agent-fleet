@@ -100,6 +100,15 @@ the edit itself touches only one side.
     name it, per the
     [GitHub reference rules](../../references/github-references.md). Inside
     GitHub text use the plain `#number` or `owner/repo#number` autolink.
+11. When step 2 found a boundary that the `Boundaries` table in
+    `docs/agents/domain.md` or the contracts document does not record yet,
+    propose recording it. Write the proposed `Boundaries` row, with its
+    producer, consumers, the versions that can meet, and a `Local check` or
+    `None`, and the proposed contracts-document entry, and show both as a diff
+    in the report for the user to approve. Do not edit either file yourself in
+    this workflow: a profile change needs the user's approval, as the
+    [project profile](../../references/project-profile.md) describes, and the
+    contracts document belongs to the project.
 
 Do not commit, push, deploy, release, publish, or apply a remote migration as
 part of this workflow.

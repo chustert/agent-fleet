@@ -53,8 +53,11 @@ evidence directory: it holds the verifier's conclusions.
 
 ## Limits
 
-Review and report only. Change nothing, commit nothing, post nothing. Write
-only under the evidence directory and the system temp directory. Contact no
+Review and report only. Change nothing in any checkout, commit nothing, post
+nothing. Write only under the evidence directory and the system temp
+directory. You may create a temporary review worktree under the system temp
+directory with `git worktree add --detach`, build and run tests there as
+`pr-review` describes, and remove it afterwards. Contact no
 hosted or paid service other than the authorized second opinion. When
 `pr-review` splits a large diff, start only read-only helpers, as its rules
 describe, on models from the `Area review` row of `docs/agents/models.md`,

@@ -108,11 +108,15 @@ define. The change sets the tier, not the author, so do not pick it yourself:
    [subagent rules](../../references/subagents.md) describe, on a model from
    the `Risk tier` row of `docs/agents/models.md`. Brief it with the
    repository, the base and head commits, the exact diff range, the issue link,
-   and `.agents/references/pr-risk-tiers.md`. Leave out the PR draft, your own
-   view of the risk, and the reasons the change was written as it was. Ask for
-   a tier and the diff evidence behind it.
+   `.agents/references/pr-risk-tiers.md`, and the rows of the `Risk examples`
+   section in `docs/agents/verification.md` that are neither `TODO` nor
+   `None`. Leave out the PR draft, your own view of the risk, and the reasons
+   the change was written as it was. Ask for a tier and the diff evidence
+   behind it.
 2. Match every changed path against the CI rule in the risk tiers and the
-   `Sensitive paths` section of `docs/agents/verification.md`.
+   `Sensitive paths` section of `docs/agents/verification.md`. When that table
+   has a `Repository` column, a row that names a repository counts only for
+   that repository's pull request.
 3. Check the classifier's evidence against the diff. When the evidence
    misreads the diff, start a new classifier with a corrected brief instead of
    substituting your own answer. Never lower a result.
