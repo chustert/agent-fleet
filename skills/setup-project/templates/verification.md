@@ -44,6 +44,14 @@ A protected file listed here may be symlinked into a new worktree of the reposit
 
 - TODO, or `None`
 
+## Sensitive paths
+
+A pull request that touches one of these paths states at least the minimum risk tier recorded here, as `.agents/references/pr-risk-tiers.md` describes. CI workflow files are always at least Medium and need no row. Owners decide this list.
+
+| Path | Minimum tier | Why |
+| --- | --- | --- |
+| TODO: such as `db/migrations/**` | TODO: `Medium` or `High` | TODO: such as "a merge applies migrations to production" |
+
 ## Review worktree setup
 
 A fresh worktree lacks ignored local files and installed dependencies.

@@ -65,9 +65,9 @@ unless the user separately and explicitly authorized that exact action.
   separately, include the change note from `cross-boundary-contract` in the
   PR's `Notes` section, or the required note the contracts document in
   `docs/agents/domain.md` defines: the contract before and after, the version
-  combinations that must keep working, the rollout and rollback order, and any
-  migration, backfill, reindex, data conversion, environment variable, or
-  release it needs.
+  combinations that must keep working, the rollout order, and any migration,
+  backfill, reindex, data conversion, environment variable, or release it
+  needs. Put the note's rollback order in `How to revert` instead.
 - State what merging triggers for each affected component, as its `Deploys`
   row in `docs/agents/verification.md` records, such as an automatic
   deployment. Also state which steps merging does not perform, such as applying
@@ -99,6 +99,28 @@ unless the user separately and explicitly authorized that exact action.
 - If a check changes files, report those files and include them in the readiness
   assessment instead of silently discarding them.
 
+### Classify risk
+
+Classify each PR's risk as the [risk tiers](../../references/pr-risk-tiers.md)
+define. The change sets the tier, not the author, so do not pick it yourself:
+
+1. Start the classifier as a read-only subagent, as the
+   [subagent rules](../../references/subagents.md) describe. Brief it with the
+   repository, the base and head commits, the exact diff range, the issue link,
+   and `.agents/references/pr-risk-tiers.md`. Leave out the PR draft, your own
+   view of the risk, and the reasons the change was written as it was. Ask for
+   a tier and the diff evidence behind it.
+2. Match every changed path against the CI rule in the risk tiers and the
+   `Sensitive paths` section of `docs/agents/verification.md`.
+3. Check the classifier's evidence against the diff. When the evidence
+   misreads the diff, start a new classifier with a corrected brief instead of
+   substituting your own answer. Never lower a result.
+4. Take the higher of the classifier's tier and the minimum tier of any
+   matching path.
+
+If the host cannot start a subagent, classify inline and say in the `Risk`
+section that the classification was not independent.
+
 ### Draft the PR
 
 Propose all of the following in one review packet:
@@ -108,10 +130,12 @@ Propose all of the following in one review packet:
 - draft or ready-for-review status, with a short reason;
 - issue links and whether each one closes or is only related;
 - changed-file/addition/deletion summary and any split recommendation;
+- risk tier and the evidence behind it;
 - commit and push status, including the exact actions still required;
 - complete PR description using the repository's template or the default below;
-- an outcome-focused summary, issue links, verification evidence, compatibility
-  and rollout notes, known limitations, and practical reviewer instructions;
+- an outcome-focused summary, issue links, risk, verification evidence, a
+  revert plan, compatibility and rollout notes, known limitations, and
+  practical reviewer instructions;
 - any suggested labels, reviewers, or companion PRs, without applying them;
 - the exact actions that approval will authorize, including moving each issue
   closed by a ready-for-review PR to the in-review status on the board the
@@ -133,6 +157,13 @@ negative or regression scenarios when relevant, and cleanup if testing changes
 local data. For work that needs a device, target hardware, or a play-test, give
 the reviewer those steps with the expected observation.
 
+Fill `Risk` from the classification above. Fill `How to revert` for every PR,
+including documentation-only ones: say whether reverting the merge commit alone
+restores the previous behaviour, name anything a revert leaves behind, such as
+an applied migration, written data, a deployed service, a shipped app build,
+or a published package, and give the steps that undo each in order. When a
+revert is unsafe, say so and describe the forward fix instead.
+
 Keep each prose paragraph, bullet, checklist item, and numbered step on one
 physical line in the Markdown source. Do not hard-wrap PR body text to a fixed
 column width. Use source line breaks only for Markdown structure, such as
@@ -142,8 +173,9 @@ reader's viewport.
 
 When the repository has its own pull-request template, such as
 `.github/pull_request_template.md` or a file in `.github/PULL_REQUEST_TEMPLATE/`,
-fill in that template's sections and leave out its instruction comments.
-Otherwise use this default:
+fill in that template's sections and leave out its instruction comments. Add
+`Risk` and `How to revert` sections after the template's own sections when it
+has none that serve the same purpose. Otherwise use this default:
 
 ```markdown
 ## Summary
@@ -164,6 +196,13 @@ Part of #XXX
 -
 -
 
+## Risk
+
+**Tier:** <!-- Low, Medium, or High -->
+
+- Classifier: <!-- the tier it picked and the diff evidence behind it -->
+- Sensitive paths: <!-- each matching path and its minimum tier, or None -->
+
 ## Verification
 
 - [x] <!-- Check actually run and passed -->
@@ -173,9 +212,13 @@ Part of #XXX
 
 <!-- Walk the reviewer through prerequisites, the happy path, relevant permission/error/regression scenarios, expected results, and cleanup. -->
 
+## How to revert
+
+<!-- Whether reverting the merge commit alone restores the previous behaviour; anything a revert leaves behind, such as an applied migration, written data, a deployed service, a shipped app build, or a published package; and the steps that undo each, in order. If a revert is unsafe, say so and give the forward fix. -->
+
 ## Notes
 
-<!-- Review hotspots, deliberate non-goals, compatibility, migrations, rollout/rollback, companion PRs, or decisions that are not obvious. -->
+<!-- Review hotspots, deliberate non-goals, compatibility, migrations, rollout, companion PRs, or decisions that are not obvious. -->
 <!-- State relevant known limitations explicitly. -->
 ```
 

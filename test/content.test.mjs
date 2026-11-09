@@ -134,8 +134,9 @@ describe("content", () => {
     assert.match(boundaries, /^\| Boundary \|.*\| Local check \|$/m);
     const verification = fs.readFileSync(path.join(templates, "verification.md"), "utf8");
     assert.match(verification, /^\| Deploys \| /m);
+    assert.match(verification.slice(verification.indexOf("## Sensitive paths")), /^\| Path \| Minimum tier \| Why \|$/m);
     for (const [name, field] of [["cross-boundary-contract", "Local check"], ["cross-boundary-contract", "Deploys"],
-      ["verify-work", "Local check"], ["prepare-pr", "Deploys"]]) {
+      ["verify-work", "Local check"], ["prepare-pr", "Deploys"], ["prepare-pr", "Sensitive paths"]]) {
       const text = fs.readFileSync(path.join(ROOT, "skills", name, "SKILL.md"), "utf8");
       assert.ok(text.includes(`\`${field}\``), `${name} reads ${field}`);
     }
