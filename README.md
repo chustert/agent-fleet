@@ -23,7 +23,7 @@ The skills then move each issue across the board:
 | `In review` | `prepare-pr`, when the pull request is ready for review |
 | `Done` | GitHub's built-in project workflow, when the issue closes |
 
-`sprint-status`, `sprint-recap`, and `repos-report` read the Sprint field to report on the current sprint. The board is not optional. When it is missing or incomplete, a skill stops and asks you to run `npx agent-fleet@latest update --dry-run` and then `npx agent-fleet@latest update` in your own terminal. The update creates or repairs the project board on GitHub, so the agent never runs it without your approval. If you ask the agent to run it, the agent runs `npx agent-fleet@latest update --dry-run --yes` and shows you the plan. It runs `npx agent-fleet@latest update --yes`, with the same flags, only after you approve that exact plan. A choice you make, such as `--board 3`, goes into both runs. Both take `--yes` because without a terminal the update answers its own questions, such as which board to link, so a dry run in your terminal could plan a different board. `--force`, which overwrites files you changed by hand, needs its own approval. The board starts with six sprints, about three months; add more in the Sprint field's settings on GitHub when they run out.
+`sprint-status`, `sprint-recap`, and `repos-report` read the Sprint field to report on the current sprint. The board is not optional. When it is missing or incomplete, a skill stops and asks you to run `npx @chustert/agent-fleet@latest update --dry-run` and then `npx @chustert/agent-fleet@latest update` in your own terminal. The update creates or repairs the project board on GitHub, so the agent never runs it without your approval. If you ask the agent to run it, the agent runs `npx @chustert/agent-fleet@latest update --dry-run --yes` and shows you the plan. It runs `npx @chustert/agent-fleet@latest update --yes`, with the same flags, only after you approve that exact plan. A choice you make, such as `--board 3`, goes into both runs. Both take `--yes` because without a terminal the update answers its own questions, such as which board to link, so a dry run in your terminal could plan a different board. `--force`, which overwrites files you changed by hand, needs its own approval. The board starts with six sprints, about three months; add more in the Sprint field's settings on GitHub when they run out.
 
 ## How one skill set fits every project
 
@@ -41,13 +41,13 @@ Platform differences live in the [platform guides](references/platforms/README.m
 
 ## Install into a project
 
-Run the installer from the project's root folder with any package manager. It needs Node.js 20 or later:
+Run the installer from the project's root folder with any package manager. It needs Node.js 20 or later. The package is `@chustert/agent-fleet`; the unscoped `agent-fleet` package on npm belongs to someone else, so always include the `@chustert/` scope:
 
 ```sh
-npx agent-fleet@latest        # npm
-pnpm dlx agent-fleet@latest   # pnpm
-yarn dlx agent-fleet@latest   # Yarn 2 or later; with Yarn 1, use npx
-bunx agent-fleet@latest       # Bun
+npx @chustert/agent-fleet@latest        # npm
+pnpm dlx @chustert/agent-fleet@latest   # pnpm
+yarn dlx @chustert/agent-fleet@latest   # Yarn 2 or later; with Yarn 1, use npx
+bunx @chustert/agent-fleet@latest       # Bun
 ```
 
 It first checks GitHub as described [above](#how-it-works-github-issues-on-one-board): the GitHub CLI, its login, the repository, and the board. Then it asks three questions, sets up the board, and copies the fleet into the project so the project stays self-contained for collaborators who never run the installer:
@@ -95,7 +95,7 @@ With Claude Code chosen, the installer also writes the agent team:
 
 ### Moving from skill-fleet
 
-Run `npx agent-fleet@latest update` in a project that skill-fleet installed. It reads `.agents/skill-fleet.json` as its own record: the fleet's files update, your choices and board carry over, the section under the old `skill-fleet` markers in `AGENTS.md` and `CLAUDE.md` moves to `agent-fleet` markers, and `.agents/agent-fleet.json` replaces the old manifest. With Claude Code among your tools, the agent team arrives in the same update.
+Run `npx @chustert/agent-fleet@latest update` in a project that skill-fleet installed. It reads `.agents/skill-fleet.json` as its own record: the fleet's files update, your choices and board carry over, the section under the old `skill-fleet` markers in `AGENTS.md` and `CLAUDE.md` moves to `agent-fleet` markers, and `.agents/agent-fleet.json` replaces the old manifest. With Claude Code among your tools, the agent team arrives in the same update.
 
 ### AGENTS.md and CLAUDE.md
 
@@ -110,15 +110,15 @@ If you edit the section by hand, the next install reports a conflict rather than
 ### Updates, checks, and workspaces
 
 ```sh
-npx agent-fleet@latest update            # update an existing installation
-npx agent-fleet@latest update --dry-run  # preview the update
-npx agent-fleet@latest check             # verify adapters, hashes, and links
-npx agent-fleet@latest list              # list the skills
+npx @chustert/agent-fleet@latest update            # update an existing installation
+npx @chustert/agent-fleet@latest update --dry-run  # preview the update
+npx @chustert/agent-fleet@latest check             # verify adapters, hashes, and links
+npx @chustert/agent-fleet@latest list              # list the skills
 ```
 
-Each command takes the project folder as an optional argument, such as `npx agent-fleet@latest update ../my-app`, and defaults to the current folder. `update` asks the same questions with your previous answers selected. It checks GitHub again, recreating or repairing the board when it changed, updates changed files, removes files the fleet no longer ships, and leaves unchanged files alone. It never overwrites a file it did not write without asking, so a project that already has its own skills with the same names is safe.
+Each command takes the project folder as an optional argument, such as `npx @chustert/agent-fleet@latest update ../my-app`, and defaults to the current folder. `update` asks the same questions with your previous answers selected. It checks GitHub again, recreating or repairing the board when it changed, updates changed files, removes files the fleet no longer ships, and leaves unchanged files alone. It never overwrites a file it did not write without asking, so a project that already has its own skills with the same names is safe.
 
-`install` and `update` refuse to run when the project's `.agents/agent-fleet.json` records a newer version than the one running, because the older version would replace newer skills with older ones. The message names both versions. Run `npx agent-fleet@<recorded version> update`, or `npx agent-fleet@latest update` once that version is published. `--force` runs the older version anyway, and also overwrites conflicting files.
+`install` and `update` refuse to run when the project's `.agents/agent-fleet.json` records a newer version than the one running, because the older version would replace newer skills with older ones. The message names both versions. Run `npx @chustert/agent-fleet@<recorded version> update`, or `npx @chustert/agent-fleet@latest update` once that version is published. `--force` runs the older version anyway, and also overwrites conflicting files.
 
 When `--force`, or a yes to the overwrite question, replaces files the fleet did not install, the installer lists them after the installation. Their previous versions remain in Git if they were committed, and `setup-project` reads them to carry any project facts into `docs/agents/` before they are lost.
 

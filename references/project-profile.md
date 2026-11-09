@@ -10,7 +10,7 @@ platform. The `setup-project` skill creates and fills them.
 ## What every project has
 
 The workflow is opinionated about where work lives. Every project that uses it
-has all of the following, and the installer (`npx agent-fleet`) sets them up:
+has all of the following, and the installer (`npx @chustert/agent-fleet`) sets them up:
 
 - **A GitHub repository.** Issues and pull requests live there. The installer
   stops when the project folder is not one.
@@ -28,15 +28,15 @@ has all of the following, and the installer (`npx agent-fleet`) sets them up:
 ## Updating the installation
 
 When a skill finds the board missing or incomplete, it asks the user to run
-`npx agent-fleet@latest update --dry-run` and then
-`npx agent-fleet@latest update` in their own terminal. The update creates or
+`npx @chustert/agent-fleet@latest update --dry-run` and then
+`npx @chustert/agent-fleet@latest update` in their own terminal. The update creates or
 repairs the project board on GitHub and updates the fleet's files, so an agent
 never runs it, or `install`, without the user's approval. If the user asks the
 agent to run the update, the agent runs
-`npx agent-fleet@latest update --dry-run --yes` and shows the user the plan it
+`npx @chustert/agent-fleet@latest update --dry-run --yes` and shows the user the plan it
 prints. If that dry run fails, the agent shows the user why and stops. Only
 after the user approves that exact plan does the agent run
-`npx agent-fleet@latest update --yes`, with the same flags as the dry run. When
+`npx @chustert/agent-fleet@latest update --yes`, with the same flags as the dry run. When
 the user makes a choice, such as the board to use or the tools that get
 adapters, the agent passes it to both runs as a flag, such as
 `--board <number>` or `--tools claude,cursor`. Adding `--force`, which

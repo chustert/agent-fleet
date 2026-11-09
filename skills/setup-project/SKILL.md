@@ -165,8 +165,8 @@ user confirms it. Run read-only queries and record names, not IDs.
   --owner <owner> --format json` lists its `Status` options and iteration field.
   If the board is missing, unlinked, or lacks an option or the iteration field,
   do not repair it here. Ask the user to run
-  `npx agent-fleet@latest update --dry-run` and then
-  `npx agent-fleet@latest update` in their own terminal. The update creates or
+  `npx @chustert/agent-fleet@latest update --dry-run` and then
+  `npx @chustert/agent-fleet@latest update` in their own terminal. The update creates or
   repairs the project board on GitHub. Do not run it yourself without the
   user's approval. When the user asks you to run it, follow [Updating the
   installation](../../references/project-profile.md#updating-the-installation).
