@@ -258,6 +258,14 @@ lanes, or the engine's command line.
   enough to identify a payment provider, email delivery, an AI API, a hosted
   database, analytics, a store, or a platform service. Record each with the
   rule that verification needs explicit approval before contacting it.
+- Sensitive paths: propose paths whose changes carry more risk than their
+  diff shows, with a minimum risk tier of `Medium` or `High` and the reason,
+  as the [risk tiers](../../references/pr-risk-tiers.md) describe. Look for
+  database migrations, authentication and permission code, payment code,
+  release and signing configuration, and paths the contracts document or the
+  `Deploys` rows show reach production on merge. Leave out CI workflow files;
+  the risk tiers already cover them. Record only the entries the user
+  confirms, and write `None` only when the user confirms there are none.
 - Review-worktree setup: which ignored files a fresh worktree needs, and which
   dependency directories can be reused when a pull request does not change the
   lockfile.

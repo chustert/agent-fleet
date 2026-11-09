@@ -33,7 +33,7 @@ Three layers keep the skills general:
 | --- | --- | --- | --- |
 | Skills | `skills/` → a project's `.agents/skills/` | The workflow: what to read, what to check, what never to do without approval | The workflow improves |
 | Project profile | a project's `docs/agents/` | Tracker, board, lifecycle statuses, routing, reading order, boundaries, commands, evidence, protected files | The project changes |
-| Shared references | `references/` → a project's `.agents/references/` | The 16 quality characteristics, GitHub link rules, subagent rules, and one guide per platform | The model or a platform's practice changes |
+| Shared references | `references/` → a project's `.agents/references/` | The 16 quality characteristics, pull request risk tiers, GitHub link rules, subagent rules, and one guide per platform | The model or a platform's practice changes |
 
 A skill never says "run `npm run build`" or "move the issue on the Roadmap board". It says "run the final verification in `docs/agents/verification.md`" and "move the issue to the started status on the board in `docs/agents/issue-tracker.md`". The [project profile reference](references/project-profile.md) defines the three profile files and how skills treat a missing, `TODO`, or `None` value.
 

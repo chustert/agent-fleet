@@ -19,6 +19,7 @@ context again, so it costs more than doing the work inline.
 | `verify-work` | Run `pr-review` against the verified diff, without the verification's conclusions. |
 | `pr-review` | Review one area of a large diff for engineering standards, while the parent owns the whole-diff checks. |
 | `create-issue` | Check the factual claims a draft adds against the project's code and records. |
+| `prepare-pr` | Pick the pull request's risk tier from the diff, as the [risk tiers](pr-risk-tiers.md) define. |
 
 ## Check that the host can start one
 
