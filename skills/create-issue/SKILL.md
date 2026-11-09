@@ -67,7 +67,8 @@ Before including a factual claim that the user did not supply:
 
 Check the claims in a subagent when that takes more than a few lookups, such as
 several claims, a component you have not read yet, or a component in another
-repository. Follow the [subagent rules](../../references/subagents.md). A
+repository. Follow the [subagent rules](../../references/subagents.md), and
+start it on a model from the `Claim check` row of `docs/agents/models.md`. A
 subagent that has not seen the draft checks each claim without leaning toward
 it. Brief it with:
 

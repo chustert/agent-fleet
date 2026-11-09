@@ -14,9 +14,10 @@ silently switch from reviewer to implementer, even when a fix looks obvious.
 
 An independent review needs a context that did not build the code. If this
 conversation planned, wrote, or debugged the code under review, run the review
-in a subagent, following the [subagent rules](../../references/subagents.md).
-The brief gives the scope and the requirement sources, but not the reasons the
-code was written as it was. For a pull request, the subagent returns the
+in a subagent, following the [subagent rules](../../references/subagents.md),
+on a model from the `Reviewer` row of `docs/agents/models.md`, chosen as those
+rules describe. The brief gives the scope and the requirement sources, but not
+the reasons the code was written as it was. For a pull request, the subagent returns the
 report and you post it as `Publish the GitHub PR report` describes. When the
 host cannot start a subagent, review inline and state in the report that the
 review was not independent.
@@ -320,7 +321,8 @@ Review a smaller diff in one pass.
    coherent part of a large component, such as a module with its tests. Keep a
    file and its tests in the same area, and aim for a few hundred changed lines
    per area.
-3. Start one subagent per area. They may run side by side, because none of them
+3. Start one subagent per area, on a model from the `Area review` row of
+   `docs/agents/models.md`. They may run side by side, because none of them
    writes anything. Brief each with:
    - this skill's file, and the instruction to apply only its engineering
      standards pass;
@@ -420,8 +422,8 @@ Lead with findings rather than a long summary. Produce:
 
 1. **Verdict and scope** - separate readiness judgments for Specification
    satisfaction and Engineering standards, plus the baseline, included paths,
-   and important exclusions. Say whether the review ran independently, and
-   which areas subagents reviewed. For a PR, include its number, URL, base SHA, head
+   and important exclusions. Say whether the review ran independently, which
+   areas subagents reviewed, and the model and effort each subagent ran on. For a PR, include its number, URL, base SHA, head
    SHA, and state that findings are limited to the PR diff. Link the PR, its
    issues, and any commit or comparison you cite, per the
    [GitHub reference rules](../../references/github-references.md). The report

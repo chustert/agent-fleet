@@ -16,9 +16,11 @@ guessing. The profile is three files under `docs/agents/`, described in the
 - `verification.md`: each component's commands, evidence, and deployments;
   services that need approval; protected files; and review-worktree setup.
 
-When the installation includes the agent team (`.claude/agents/` exists), a
-fourth file, `autonomy.md`, records what the team's engineering lead may do
-without asking the user.
+A fourth file, `autonomy.md`, records what the lead may do without asking the
+user. The lead is the conversation that runs `lead-issue`, or, when the agent
+team is installed (`.claude/agents/` exists), the team's engineering lead. A
+fifth, `models.md`, records the models and efforts that skills start agents on,
+in order of preference.
 
 Then tailor the project's instruction files. The fleet installer creates
 `AGENTS.md` from `templates/AGENTS.template.md` when the project has none, and
@@ -314,14 +316,19 @@ lanes, or the engine's command line.
   `TODO`. Propose the renames and moved settings as a diff, and apply it only
   after the user approves. Keep every value the user wrote, and keep sections
   the template does not have.
-- Write `autonomy.md` only when the agent team is installed, and only with
-  the user's confirmation, because it grants the engineering lead standing
-  authorization. Start from the template, which lists the usual grants and the
-  actions that always go to the user. Fill `Cross-model review` with the
-  command of a model CLI from another family that the user has installed and
-  logged in, run read-only, or `None`. Never add a grant the user did not
-  confirm. Until the user confirms, leave the file missing, so the lead keeps
-  asking at every gate.
+- Write `autonomy.md` only with the user's confirmation, because it grants
+  the lead standing authorization. Start from the template, which lists the
+  usual grants and the actions that always go to the user. Fill
+  `Cross-model review` with the command of a model CLI from another family
+  that the user has installed and logged in, run read-only, or `None`. Never add a grant the
+  user did not confirm. Until the user confirms, leave the file missing, so
+  the lead keeps asking at every gate.
+- Write `models.md` from its template, and ask the user to confirm each row.
+  For each role and helper task, ask which models and efforts to use, in order
+  of preference. Offer the models the user's coding tools can start, read from
+  each tool's own model list where it has one, never from memory. Keep
+  `Same as the lead` where the user has no preference, and never write a model
+  the user did not confirm.
 - Keep the profile a configuration record, not a copy of the documentation.
   Link the architecture, contracts, and testing guides rather than restating
   them.
@@ -395,9 +402,11 @@ Present a compact summary:
   proposed quality weighting;
 - what `AGENTS.md` now says about the project's intent, source of truth, and
   rules, and the source of each statement;
-- with the agent team: each grant `autonomy.md` would give the engineering
-  lead, the actions that always go to the user, the loop limits, and the
-  second-opinion command, for the user to confirm or narrow;
+- each grant `autonomy.md` would give the lead, the actions that always go to
+  the user, the loop limits, and the second-opinion command, for the user to
+  confirm or narrow;
+- the models `models.md` would set for each role and helper task, in order of
+  preference, for the user to confirm;
 - every remaining `TODO`, in the profile or in `AGENTS.md`, and the question
   that would resolve it;
 - the rows, columns, and sections added to existing profile files;
@@ -409,7 +418,7 @@ Present a compact summary:
 
 Ask the user to confirm or correct the judgement calls: routing ownership,
 fallback repository, quality weighting, the project intent, the autonomy
-grants, and anything marked proposed. Apply the corrections.
+grants, the models, and anything marked proposed. Apply the corrections.
 
 ## 11. Check the installation
 

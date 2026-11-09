@@ -390,12 +390,18 @@ describe("agent team", () => {
     assert.deepEqual(checks.check(project), []);
   });
 
-  test("without Claude Code there is no team", async () => {
+  test("without Claude Code there is no team, but lead-issue and its scripts come", async () => {
     const { code, output } = await install("--cursor");
     assert.equal(code, 0, output);
-    for (const relative of [".claude", ".agents/scripts/gate.mjs"]) assert.equal(exists(project, relative), false, relative);
-    assert.doesNotMatch(output, /autonomy\.md/);
-    assert.doesNotMatch(checks.findBlock(read(project, "AGENTS.md")), /engineering-lead/);
+    assert.equal(exists(project, ".claude"), false);
+    for (const file of ["gate.mjs", "second-opinion.mjs"]) assert.ok(exists(project, `.agents/scripts/${file}`), file);
+    assert.ok(exists(project, ".agents/skills/lead-issue/briefs/verifier.md"));
+    assert.match(output, /create [^\n]*docs\/agents\/autonomy\.md/);
+    assert.match(output, /create [^\n]*docs\/agents\/models\.md/);
+    const block = checks.findBlock(read(project, "AGENTS.md"));
+    assert.doesNotMatch(block, /engineering-lead/);
+    assert.match(block, /run `lead-issue`/);
+    assert.deepEqual(checks.check(project), []);
   });
 
   test("the team's settings merge with the project's own, and leave with Claude Code", async () => {
@@ -510,7 +516,7 @@ describe("AGENTS.md and CLAUDE.md", () => {
 
   test("an existing AGENTS.md keeps its content", async () => {
     fs.writeFileSync(path.join(project, "AGENTS.md"), "# Mine\n\nKeep this rule.\n");
-    for (const name of ["issue-tracker.md", "domain.md", "verification.md", "autonomy.md"]) {
+    for (const name of ["issue-tracker.md", "domain.md", "verification.md", "autonomy.md", "models.md"]) {
       write(project, `docs/agents/${name}`, template(name).replaceAll("TODO", "Filled"));
     }
     const first = await install();
