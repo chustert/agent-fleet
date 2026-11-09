@@ -219,7 +219,7 @@ describe("install", () => {
       assert.equal(code, 1, output);
       assert.ok(output.includes(`installed with agent-fleet ${newer}, which is newer than this agent-fleet ${version()}`));
       const again = [command, ...argv].join(" ");
-      assert.ok(output.includes(`Run npx agent-fleet@${newer} ${again}, or npx agent-fleet@latest ${again} once ${newer} is published`),
+      assert.ok(output.includes(`Run npx @chustert/agent-fleet@${newer} ${again}, or npx @chustert/agent-fleet@latest ${again} once ${newer} is published`),
         output);
       assert.deepEqual(github.calls, []);
     }
@@ -502,10 +502,10 @@ describe("AGENTS.md and CLAUDE.md", () => {
     const block = checks.findBlock(agents);
     assert.match(block, /## Agent workflow/);
     assert.ok(block.includes("When the board is missing or incomplete, or the fleet's files need an update, ask the "
-      + "user to run `npx agent-fleet@latest update --dry-run` and then `npx agent-fleet@latest update` in their own "
+      + "user to run `npx @chustert/agent-fleet@latest update --dry-run` and then `npx @chustert/agent-fleet@latest update` in their own "
       + "terminal. Do not run it yourself without the user's approval. If the user asks you to run it, run "
-      + "`npx agent-fleet@latest update --dry-run --yes` and show the user the plan it prints. Run "
-      + "`npx agent-fleet@latest update --yes` only after the user approves that exact plan, with the same flags"), block);
+      + "`npx @chustert/agent-fleet@latest update --dry-run --yes` and show the user the plan it prints. Run "
+      + "`npx @chustert/agent-fleet@latest update --yes` only after the user approves that exact plan, with the same flags"), block);
     assert.match(block, /Adding `--force`, which overwrites files changed by hand, needs its own approval\./);
     assert.match(block, /Do not edit by hand the files that `\.agents\/agent-fleet\.json` records/);
     assert.match(block, /Put a project's own skill in its own folder under `\.agents\/skills\/`, and add nothing inside a fleet skill's folder or `\.agents\/references\/`\./);

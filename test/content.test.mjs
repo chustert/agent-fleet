@@ -29,10 +29,10 @@ function shippedFiles() {
 
 // The update rule, as "Updating the installation" in the profile reference states it. Every mention of the
 // update repeats the user's run and the approval rule, and states or links the agent's steps.
-const USER_RUN = "`npx agent-fleet@latest update --dry-run` and then `npx agent-fleet@latest update` in their own terminal";
+const USER_RUN = "`npx @chustert/agent-fleet@latest update --dry-run` and then `npx @chustert/agent-fleet@latest update` in their own terminal";
 const APPROVAL = "without the user's approval";
-const AGENT_STEPS = ["`npx agent-fleet@latest update --dry-run --yes`", "approves that exact plan",
-  "`npx agent-fleet@latest update --yes`", "same flags", "`--force`", "needs its own approval"];
+const AGENT_STEPS = ["`npx @chustert/agent-fleet@latest update --dry-run --yes`", "approves that exact plan",
+  "`npx @chustert/agent-fleet@latest update --yes`", "same flags", "`--force`", "needs its own approval"];
 const UPDATE_LINK = /\(\.\.\/\.\.\/references\/project-profile\.md#updating-the-installation\)|"Updating the installation" in `\.agents\/references\/project-profile\.md`/;
 
 /** The paragraphs and list items of Markdown text, each on one line. */
@@ -44,7 +44,7 @@ function paragraphs(text) {
 function updateRuleGaps(paragraph, { code = true } = {}) {
   const plain = (phrase) => (code ? phrase : phrase.replaceAll("`", ""));
   // The bare command, without --dry-run or --yes, comes only as the second half of the user's run.
-  const bare = (code ? /`npx agent-fleet@latest update`/g : /npx agent-fleet@latest update(?! --)/g);
+  const bare = (code ? /`npx @chustert\/agent-fleet@latest update`/g : /npx @chustert\/agent-fleet@latest update(?! --)/g);
   const gaps = [];
   if (paragraph.split(plain(USER_RUN)).length - 1 !== (paragraph.match(bare) ?? []).length) {
     gaps.push("the user's run with its dry run first");
@@ -181,9 +181,21 @@ describe("content", () => {
     }
   });
 
+  test("every command names the scoped package, never the unscoped one someone else owns", () => {
+    // The unscoped `agent-fleet` on npm is another author's package, so `npx agent-fleet` would run their code.
+    const files = [...shippedFiles(), "README.md", "AGENTS.md", "package.json",
+      ...checks.listFiles(path.join(ROOT, ".github/workflows")).map((file) => `.github/workflows/${file}`)];
+    const unscoped = /\b(?:npx|dlx|bunx|npm (?:i|install|exec|view|stage \w+))\s+"?agent-fleet\b|(?<![\w/@-])agent-fleet@(?:latest|\$|\d|<)/;
+    const found = files.flatMap((file) => fs.readFileSync(path.join(ROOT, file), "utf8").split("\n")
+      .map((line, index) => [file, index + 1, line]))
+      .filter(([, , line]) => unscoped.test(line)).map(([file, line, text]) => `${file}:${line}: ${text.trim()}`);
+    assert.deepEqual(found, []);
+  });
+
   test("the package ships what the installer reads", () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
     for (const entry of ["bin/", "lib/", "skills/", "references/", "agents/"]) assert.ok(pkg.files.includes(entry), entry);
+    assert.equal(pkg.name, "@chustert/agent-fleet");
     assert.equal(pkg.bin["agent-fleet"], "bin/agent-fleet.mjs");
     assert.equal(pkg.repository.url, "git+https://github.com/chustert/agent-fleet.git");
   });
