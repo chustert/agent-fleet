@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
 import * as checks from "../lib/check-skills.mjs";
-import { agentNames, ROOT, skillNames } from "../lib/install.mjs";
+import { agentNames, desiredFiles, ROOT, skillNames } from "../lib/install.mjs";
 import { configuredCommand, protectedPaths } from "../lib/second-opinion.mjs";
 
 const AGENTS = agentNames();
@@ -15,6 +15,10 @@ const field = (frontmatter, key) => {
   return raw === undefined ? undefined : checks.scalar(raw);
 };
 const GATE_HOOKS = ["bash-guard", "state-guard", "verifier-start", "verifier-stop", "observe-only", "authorize-record", "write-scope", "agent-scope"];
+const BRIEFS = checks.listFiles(path.join(ROOT, "skills/lead-issue/briefs")).map((file) => file.replace(/\.md$/, ""));
+const LEAD_FILES = ["skills/lead-issue/SKILL.md", ...BRIEFS.map((name) => `skills/lead-issue/briefs/${name}.md`)];
+// Vendors, products and accounts that no shipped file may name.
+const VENDORS = /\b(Figma|Slack|Discord|Teams|Codex|OpenAI|GPT|Grok|Gemini|Linear|Jira|chustert|Playwright|Cypress|xcrun|adb)\b/;
 
 describe("agent team", () => {
   test("every agent has a name that matches its file and a description", () => {
@@ -78,9 +82,8 @@ describe("agent team", () => {
       ...checks.listFiles(path.join(ROOT, "agents/automations")).map((file) => `agents/automations/${file}`),
       ...["proof-standards", "create-verification-harness", "maintain-verification-harness", "triage-report"]
         .map((name) => `skills/${name}/SKILL.md`)];
-    const names = /\b(Figma|Slack|Discord|Teams|Codex|OpenAI|GPT|Grok|Gemini|Linear|Jira|chustert|Playwright|Cypress|xcrun|adb)\b/;
     const found = files.flatMap((file) => read(file).split("\n").map((line, index) => [file, index + 1, line]))
-      .filter(([, , line]) => names.test(line)).map(([file, line, text]) => `${file}:${line}: ${text.trim()}`);
+      .filter(([, , line]) => VENDORS.test(line)).map(([file, line, text]) => `${file}:${line}: ${text.trim()}`);
     assert.deepEqual(found, []);
   });
 
@@ -90,6 +93,110 @@ describe("agent team", () => {
     for (const heading of ["## The lead may", "## Always ask the user", "## Loop limits", "## Cross-model review"]) {
       assert.ok(text.includes(heading), heading);
     }
+    assert.doesNotMatch(text, /^## Dispatch/m, "models live in models.md");
+  });
+});
+
+describe("models", () => {
+  const template = read("skills/setup-project/templates/models.md");
+  /** The first-column cells of the table under a heading of the models template. */
+  const rows = (heading) => {
+    const section = template.slice(template.indexOf(heading)).split(/\n## /)[0];
+    return [...section.matchAll(/^\| ([^|]+?) \| ([^|]+?) \|$/gm)].map(([, name, value]) => ({ name, value }))
+      .filter(({ name }) => name !== "---" && !/^(Role|Task)$/.test(name));
+  };
+  const named = (text) => [...text.matchAll(/the\s+`([^`]+)`\s+row\s+of\s+`docs\/agents\/models\.md`/g)].map(([, row]) => row);
+
+  test("the template has a row for every role and helper task, defaulting to the lead's model", () => {
+    const roles = rows("## Roles");
+    const helpers = rows("## Helper subagents");
+    assert.deepEqual(roles.map(({ name }) => name),
+      ["Developer", "Verifier", "Reviewer", "UX designer", "Spec writer", "Harness keeper"]);
+    for (const brief of BRIEFS) {
+      const role = brief === "ux-designer" ? "UX designer" : brief[0].toUpperCase() + brief.slice(1).replace("-", " ");
+      assert.ok(roles.some(({ name }) => name === role), `${brief} has a row`);
+    }
+    assert.ok(helpers.length >= 4);
+    for (const { name, value } of [...roles, ...helpers]) assert.equal(value, "Same as the lead", name);
+  });
+
+  test("every skill that starts a subagent names a row the template has, and every helper row is used", () => {
+    const all = new Set([...rows("## Roles"), ...rows("## Helper subagents")].map(({ name }) => name));
+    const used = new Set();
+    for (const skill of skillNames()) {
+      const text = read(`skills/${skill}/SKILL.md`);
+      const startsOne = /subagents\.md/.test(text) && skill !== "lead-issue";
+      const rowsNamed = named(text);
+      if (startsOne) assert.ok(rowsNamed.length > 0, `${skill} starts a subagent but names no models.md row`);
+      for (const row of rowsNamed) {
+        assert.ok(all.has(row), `${skill}: no row ${row}`);
+        used.add(row);
+      }
+    }
+    for (const file of LEAD_FILES) for (const row of named(read(file))) assert.ok(all.has(row), `${file}: no row ${row}`);
+    for (const { name } of rows("## Helper subagents")) assert.ok(used.has(name), `no skill uses ${name}`);
+  });
+
+  test("the subagent rules define how to choose a model", () => {
+    const rules = read("references/subagents.md");
+    assert.match(rules, /^## Choose the model$/m);
+    for (const phrase of ["`docs/agents/models.md`", "Same as the lead", "stop and ask the user", "Record the choice"]) {
+      assert.ok(rules.includes(phrase), phrase);
+    }
+    assert.match(read("skills/lead-issue/SKILL.md"), /Choose the model/);
+  });
+});
+
+describe("lead-issue", () => {
+  test("the skill links every role brief, and every link has a brief", () => {
+    const linked = [...read("skills/lead-issue/SKILL.md").matchAll(/\]\(briefs\/([a-z-]+)\.md\)/g)].map(([, name]) => name);
+    assert.deepEqual([...new Set(linked)].sort(), [...BRIEFS].sort());
+    for (const role of ["developer", "verifier", "reviewer", "ux-designer", "spec-writer", "harness-keeper"]) {
+      assert.ok(BRIEFS.includes(role), role);
+    }
+  });
+
+  test("each brief names the skills its role runs, and they exist", () => {
+    const skills = new Set(skillNames());
+    const runs = {
+      developer: ["start-issue", "implement", "tdd", "diagnosing-bugs", "prepare-pr"],
+      verifier: ["verify-work", "proof-standards"],
+      reviewer: ["pr-review"],
+      "spec-writer": ["to-spec", "create-issue"],
+      "harness-keeper": ["create-verification-harness", "maintain-verification-harness"],
+    };
+    for (const [role, names] of Object.entries(runs)) {
+      const text = read(`skills/lead-issue/briefs/${role}.md`);
+      for (const name of names) {
+        assert.ok(skills.has(name), `${role}: ${name} is a skill`);
+        assert.ok(text.includes(`\`${name}\``), `${role} names ${name}`);
+      }
+    }
+    for (const file of LEAD_FILES) {
+      for (const [, skill] of read(file).matchAll(/\.agents\/skills\/([a-z-]+)\//g)) assert.ok(skills.has(skill), `${file}: ${skill}`);
+    }
+  });
+
+  test("the gate commands and scripts it names exist, and ship without Claude Code", () => {
+    const gate = read("lib/gate.mjs");
+    const shipped = desiredFiles([]);
+    for (const file of LEAD_FILES) {
+      const text = read(file);
+      for (const [, sub] of text.matchAll(/gate\.mjs ([a-z-]+)/g)) {
+        assert.ok(gate.includes(`  ${sub}(`) || gate.includes(`"${sub}"(`), `${file}: gate.mjs ${sub}`);
+      }
+      for (const [, script] of text.matchAll(/\.agents\/scripts\/([a-z-]+\.mjs)/g)) {
+        assert.ok(shipped.has(`.agents/scripts/${script}`), `${file}: ${script}`);
+      }
+    }
+  });
+
+  test("it names no coding tool, vendor, product or account", () => {
+    const tools = /\b(Claude|Anthropic|T3|Cursor|Kiro|OpenCode)\b/;
+    const found = LEAD_FILES.flatMap((file) => read(file).split("\n").map((line, index) => [file, index + 1, line]))
+      .filter(([, , line]) => VENDORS.test(line) || tools.test(line))
+      .map(([file, line, text]) => `${file}:${line}: ${text.trim()}`);
+    assert.deepEqual(found, []);
   });
 });
 

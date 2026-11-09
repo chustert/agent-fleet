@@ -78,6 +78,7 @@ The installer writes:
 - `.claude/skills/`, `.cursor/skills/`, or `.kiro/skills/`: the adapters for the tools you chose;
 - `.agents/references/`: the shared references;
 - `.agents/scripts/check-skills.mjs`: a checker anyone can run with `node .agents/scripts/check-skills.mjs`;
+- `.agents/scripts/gate.mjs` and `.agents/scripts/second-opinion.mjs`: the verification gate's patch fingerprints and the cross-model review, which `lead-issue` uses with any tool;
 - `.agents/agent-fleet-LICENSE`: the fleet's licence, which travels with the copies;
 - `.agents/agent-fleet.json`: the version, the choices, and a hash of every file it wrote;
 - `AGENTS.md` and `CLAUDE.md`: the project's instruction files, described below;
@@ -89,7 +90,6 @@ With Claude Code chosen, the installer also writes the agent team:
 
 - `.claude/agents/`: the eight agent definitions;
 - `.claude/automations/`: optional routine prompts and a GitHub Actions template, described in its `README.md`;
-- `.agents/scripts/gate.mjs` and `.agents/scripts/second-opinion.mjs`: the verification gate and the cross-model review;
 - `.claude/agent-memory-local/.gitignore`: keeps the agents' per-machine memory out of Git;
 - `.claude/settings.json`: the team's permission rules and hooks, merged in entry by entry. Your own settings stay as they are, an entry you already had stays yours, and the manifest records the entries the installer added, so dropping Claude Code removes only those. An entry of the team's that you remove by hand stays out on later updates, until `--force` restores it. These settings apply to every Claude Code session in the project, not only the team's: no session can push the default branch or mark a pull request ready without a passing verdict.
 
@@ -132,11 +132,13 @@ To try an unreleased version, run the installer straight from GitHub with `npx g
 
 ## Adapt it to the project
 
-Open the project in your coding agent and run `setup-project`. It inspects the repositories, GitHub tracker, board, components, commands, services, secret files, and documentation, and fills in the three profile files:
+Open the project in your coding agent and run `setup-project`. It inspects the repositories, GitHub tracker, board, components, commands, services, secret files, and documentation, and fills in the profile files:
 
 - `docs/agents/issue-tracker.md`
 - `docs/agents/domain.md`
 - `docs/agents/verification.md`
+- `docs/agents/autonomy.md`, the approval gates the lead may answer for you, written only once you confirm each grant
+- `docs/agents/models.md`, the models and efforts that skills start agents on
 
 `domain.md` lists the boundaries between parts that ship separately, with a `Local check` that runs both sides together, and `verification.md` records each component's commands, runtime evidence, and what a merge `Deploys`. When the project already had its own skills or docs, `setup-project` reads their earlier versions from Git and proposes a profile row for each project fact they held.
 
@@ -205,13 +207,37 @@ The sprint scripts cover the repositories in the routing table of `docs/agents/i
 | 4 | `prepare-pr` | Checks the branch and drafts the PR for your approval before publishing anything. | `/prepare-pr Prepare the current branch's PR for #12.` | Same as `implement`, possibly at lower effort |
 | 5 | `pr-review` | Independently reviews a PR and posts the findings as one comment. | `/pr-review https://github.com/<owner>/<repo>/pull/13` | High-tier model, such as Opus 5 High/XHigh or GPT-5.6-Sol High/XHigh |
 
+### Hand an issue to a lead
+
+| Skill | What it does | Example prompt | Suggested models |
+| --- | --- | --- | --- |
+| `lead-issue` | Leads one issue through the whole task workflow from your conversation, which only organises. It starts a developer, a fresh verifier for every round, and an independent reviewer as agents of their own, passes findings back word for word, and has the developer open the pull request only when a passing verdict covers the exact patch. | `/lead-issue https://github.com/<owner>/<repo>/issues/12` | High-tier model, such as Opus 5 High or GPT-5.6-Sol High |
+
+`lead-issue` works in any coding tool, because it starts each role the way the tool allows: as a subagent, as a separate thread such as a delegated task in T3 Code, or, when the tool has neither, as a brief file you open in a new session. The role briefs live in `skills/lead-issue/briefs/`, and every agent leaves its records in the run directory inside the repository's Git directory, which all worktrees share. `docs/agents/autonomy.md` decides which approval gates the lead answers for you. Without it, the lead asks at every gate.
+
+With the agent team installed, the lead starts each verifier as the team's `verifier` agent, so the gate's hooks hold a ready pull request until a recorded verdict covers the exact patch. Without the team, nothing enforces that: the developer compares the verdict's patch fingerprint with the commit before it pushes and opens the pull request, the pull request says so, and the lead checks the fingerprint again afterwards.
+
+### Choose the models agents start on
+
+`docs/agents/models.md` lists, for each role and for each kind of helper subagent, the models and efforts to start it on, in order of preference:
+
+| Role | Models, first available wins |
+| --- | --- |
+| Verifier | GPT-5.6-Sol, XHigh; then Opus 5, XHigh |
+| Reviewer | GPT-5.6-Sol, XHigh; then Opus 5, High |
+| Developer | Same as the lead |
+
+Every skill that starts an agent applies the same rule, which "Choose the model" in `references/subagents.md` defines. It reads which models and efforts the tool can start right now, takes the first entry on that list, and never swaps in a model or effort the row doesn't name. When nothing on the list is available, a row ending in `Same as the lead` falls back to the model of the conversation that starts the agent, and any other row stops and asks you. The record of each round names the model that ran and why earlier entries were skipped.
+
+How exactly a tool can follow the row depends on the tool. One that starts agents with a named provider, model and effort, such as T3 Code's delegated tasks, can follow it exactly. One whose subagents take only a model family matches an entry only when it shows which version that family starts. A skill you invoke yourself, such as `/verify-work`, runs on your conversation's model; the file decides only the agents it starts. With the agent team installed, the verifier must be the team's `verifier` agent to record a verdict the gate accepts, so it takes the first `Verifier` entry that agent can run on.
+
 ### Used by other skills
 
 `align-issue`, `cross-boundary-contract`, `tdd`, `diagnosing-bugs`, `proof-standards`, `technical-writing`, and `unslop` run from inside the workflows above. `triage-report` classifies customer reports against the code and the tracker. You can also invoke them directly, for example `/diagnosing-bugs` for a defect or `/teach` to be walked through code.
 
 ## The agent team
 
-The team runs the workflow above in Claude Code, with you at one point of contact. Start a session as the engineering lead from the project root:
+The team runs the workflow above in Claude Code, with you at one point of contact. It is the Claude Code version of [`lead-issue`](#hand-an-issue-to-a-lead): the same roles as agent definitions, with hooks that hold each role to its limits. Start a session as the engineering lead from the project root:
 
 ```sh
 claude --agent engineering-lead --permission-mode auto

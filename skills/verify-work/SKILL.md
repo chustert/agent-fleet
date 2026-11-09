@@ -203,6 +203,8 @@ After freezing the acceptance matrix and command evidence, run `pr-review`
 against the same exact diff and base in a subagent, following the
 [subagent rules](../../references/subagents.md). This context has watched the
 work being built and checked, so a review run here would not be independent.
+Start it on a model from the `Reviewer` row of `docs/agents/models.md`, chosen
+as those rules describe.
 
 Brief the subagent with:
 
@@ -221,9 +223,11 @@ said about why the code was written as it was. `pr-review` reaches its own
 verdict on both axes.
 
 When the host cannot start a subagent, run `pr-review` inline and state in the
-report that the review was not independent. When the subagent's report asks
-for an approval, put the request to the user rather than running the step
-yourself.
+report that the review was not independent. The exception is a brief that says
+another agent runs the review when you cannot, as a `lead-issue` verifier's
+brief does. Then follow that brief and leave the code review section pending
+instead. When the subagent's report asks for an approval, put the request to
+the user rather than running the step yourself.
 
 The review must keep two axes distinct:
 
@@ -262,7 +266,8 @@ Return one self-contained verification record containing:
    changes that cross a boundary.
 7. **Code review:** the separate Spec and Engineering Standards results from
    `pr-review`, including findings and unverified risks, and whether the review
-   ran in a subagent or inline.
+   ran in a subagent, inline, or is pending for another agent, and the model
+   and effort it ran on.
 8. **Next action:** return failures to `implement`, request missing evidence, or
    state that the verified local work is ready for approved PR preparation.
 

@@ -105,7 +105,8 @@ Classify each PR's risk as the [risk tiers](../../references/pr-risk-tiers.md)
 define. The change sets the tier, not the author, so do not pick it yourself:
 
 1. Start the classifier as a read-only subagent, as the
-   [subagent rules](../../references/subagents.md) describe. Brief it with the
+   [subagent rules](../../references/subagents.md) describe, on a model from
+   the `Risk tier` row of `docs/agents/models.md`. Brief it with the
    repository, the base and head commits, the exact diff range, the issue link,
    and `.agents/references/pr-risk-tiers.md`. Leave out the PR draft, your own
    view of the risk, and the reasons the change was written as it was. Ask for
@@ -118,8 +119,9 @@ define. The change sets the tier, not the author, so do not pick it yourself:
 4. Take the higher of the classifier's tier and the minimum tier of any
    matching path.
 
-If the host cannot start a subagent, classify inline and say in the `Risk`
-section that the classification was not independent.
+Name the classifier's model and effort in the `Risk` section. If the host
+cannot start a subagent, classify inline and say in the `Risk` section that
+the classification was not independent.
 
 ### Draft the PR
 

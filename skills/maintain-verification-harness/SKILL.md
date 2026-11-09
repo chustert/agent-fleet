@@ -44,7 +44,9 @@ regression (report it; never paper over it in the map).
 1. **Index hygiene.** Read `features/README.md` and list its sibling files.
    Fix missing, extra, duplicate or dead entries.
 
-2. **Source wave.** One read-only subagent per feature file, run side by side.
+2. **Source wave.** One read-only subagent per feature file, run side by side,
+   each on a model from the `Feature audit` row of `docs/agents/models.md`,
+   chosen as the [subagent rules](../../references/subagents.md) describe.
    Each explains how the feature works from source, flags likely drift with
    `file:line` citations, and returns one live-verification recipe. They never
    drive the app and never edit files. Return shape: summary, source entry

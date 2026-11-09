@@ -2,7 +2,8 @@
 
 The fleet's skills describe the workflow. Everything that differs between
 projects lives in the project itself, in three files under `docs/agents/`,
-plus a fourth for projects with the agent team.
+plus `autonomy.md` for the lead's standing authorization and `models.md` for
+the models that skills start agents on.
 Skills read those files instead of naming a repository, board, command, or
 platform. The `setup-project` skill creates and fills them.
 
@@ -60,8 +61,9 @@ repository keeps its own Git history.
 | `docs/agents/issue-tracker.md` | project | Tracker settings, the project board and its lifecycle statuses, branch conventions, and the routing table that maps each component to its repository, local path, and responsibilities. The installer creates it with every setting it reads from GitHub; `setup-project` adds the routing and labels. |
 | `docs/agents/domain.md` | project | The knowledge reading order, glossary, architecture, contracts document, known boundaries and how to check each one locally, ADR location, and the project's quality weighting. |
 | `docs/agents/verification.md` | project | For every component: platform, test harness, focused and final commands, local run, runtime evidence for each entry point, prerequisites, and what a merge or release deploys. Also the online and paid services that need approval, protected files, sensitive paths with their minimum risk tier, and review-worktree setup. |
-| `docs/agents/autonomy.md` | project | Only with the agent team, which Claude Code projects get: the user's standing authorization, which approval gates the engineering lead may answer on the user's behalf and which always go to the user, the loop limits, and the command for the cross-model second opinion. Without it, the lead asks the user at every gate. `setup-project` writes it after the user confirms each grant. |
-| `.agents/references/` | fleet | Shared models every project uses: this file, the software-quality characteristics, the pull request risk tiers, the GitHub reference rules, and the platform guides. Change them in the fleet and reinstall; do not edit them in a project. |
+| `docs/agents/autonomy.md` | project | The user's standing authorization for the lead, which is the conversation running `lead-issue` or, with the agent team, the engineering lead: which approval gates the lead may answer on the user's behalf and which always go to the user, the loop limits, and the command for the cross-model second opinion. Without it, the lead asks the user at every gate. `setup-project` writes it after the user confirms each grant. |
+| `docs/agents/models.md` | project | For each role of `lead-issue` and each helper subagent a skill starts, the models and efforts to start it on, in order of preference. A skill takes the first entry the host can start, as "Choose the model" in `.agents/references/subagents.md` describes. A missing file or row means the model of the conversation that starts the agent. `setup-project` writes it after the user confirms each row. |
+| `.agents/references/` | fleet | Shared models every project uses: this file, the software-quality characteristics, the pull request risk tiers, the GitHub reference rules, the subagent and role agent rules, and the platform guides. Change them in the fleet and reinstall; do not edit them in a project. |
 
 The templates for the profile files and for a new `AGENTS.md` live in
 `.agents/skills/setup-project/templates/`.
@@ -90,7 +92,9 @@ The templates for the profile files and for a new `AGENTS.md` live in
    file and the section.
 2. A value marked `TODO`, or absent, is unknown. Do not fill it from
    convention, another project, or memory. Ask the user, or recommend
-   `setup-project`.
+   `setup-project`. The one exception is `docs/agents/models.md`, which
+   defines a missing file or row as the model of the conversation that starts
+   the agent.
 3. `None` is a real value. The project deliberately has no glossary, no
    contracts document, or no test harness. Skip the step that depends on it and
    report it as not configured, not as a failure. The board rows never allow
