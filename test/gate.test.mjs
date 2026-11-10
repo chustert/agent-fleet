@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +8,10 @@ import { after, before, describe, test } from "node:test";
 import { ROOT } from "../lib/install.mjs";
 
 const GATE = path.join(ROOT, "lib/gate.mjs");
+
+// When this suite runs inside an agent session, that session's git and gh wrappers are on PATH. The fixtures below
+// push their default branches and start sessions of their own, so they run without the outer session's wrappers.
+process.env.PATH = process.env.PATH.split(path.delimiter).filter((dir) => path.basename(dir) !== "agent-fleet-shims").join(path.delimiter);
 
 function sh(cwd, cmd, args, options = {}) {
   const result = spawnSync(cmd, args, { cwd, encoding: "utf8", ...options });
@@ -31,13 +36,112 @@ const denied = (result) => result.out.includes('"permissionDecision":"deny"');
 const bash = (cwd, command) => ({ cwd, tool_input: { command } });
 const fingerprintOf = (cwd, ...flags) => JSON.parse(gate(cwd, ["fingerprint", ...flags]).out).fingerprint;
 
+// Five review rounds of a smarter reader each brought back something the first reader caught. So the reader stays as
+// it shipped in 2.2.0, and what it can't see is the wrappers' to check. Changing it on purpose means changing this hash.
+test("the hook's reader of shell text is the one that shipped in 2.2.0", () => {
+  const source = fs.readFileSync(GATE, "utf8").replace(/\r\n/g, "\n");
+  const reader = source.slice(source.indexOf("// ---------------------------------------------------------------- shell parsing"),
+    source.indexOf("// ---------------------------------------------------------------- wrappers"));
+  assert.equal(crypto.createHash("sha256").update(reader).digest("hex"), "5a76690ef62772522c6965fad7dba920f4a8a8a21e6ead5c70fbb43eae5fb7df");
+});
+
+/** A stand-in for gh on PATH: it records each call, and answers the two lookups the gate's gh wrapper makes. */
+function fakeGh(dir) {
+  const bin = path.join(dir, "bin");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "gh"), [
+    "#!/bin/sh",
+    'case "$1 $2" in',
+    '  "alias list") echo "prc: pr create"; exit 0 ;;',
+    '  "fails ") exit 4 ;;',
+    // Pull request 7 proposes the session's branch; any other one proposes somebody else's.
+    '  "pr view") case "$3" in *7) head=$GH_PR_HEAD ;; *) head=someone-elses ;; esac',
+    '    echo "{\\"headRefName\\":\\"$head\\",\\"isCrossRepository\\":false}"; exit 0 ;;',
+    "esac",
+    // What an `api` call receives on standard input, as the installer's GraphQL calls send their query.
+    '[ "$1" = api ] && cat >> "$GH_LOG.in"',
+    // One line for each call, whatever its arguments hold.
+    'printf "%s\\n" "$(echo "$PWD :: $*" | tr "\\n" " ")" >> "$GH_LOG"',
+    "",
+  ].join("\n"), { mode: 0o755 });
+  // A Git extension, as `git subtree` or a release tool is one: Git runs it, and it pushes.
+  fs.writeFileSync(path.join(bin, "git-pushes"), "#!/bin/sh\nexec git push origin HEAD:main\n", { mode: 0o755 });
+  return { bin, log: path.join(dir, "gh.log") };
+}
+
+let sessions = 0;
+
+/**
+ * An agent session as the harness runs one: the session-start hook once, then for each command the bash-guard hook
+ * and, unless that refuses, the command itself in a shell with the gate's wrappers on PATH. The checks below look at
+ * what a command did, the pushed branch and the calls gh received, not at how it was read.
+ */
+function startSession(project, gh, prHead, { gateFile = GATE, before = [] } = {}) {
+  const id = `session-${++sessions}`;
+  const envFile = path.join(path.dirname(gh.bin), `${id}.env.sh`);
+  const env = { ...process.env, PATH: [...before, gh.bin, process.env.PATH].join(path.delimiter), GH_LOG: gh.log, GH_PR_HEAD: prHead };
+  const started = spawnSync(process.execPath, [gateFile, "hook", "session-env"], {
+    cwd: project, encoding: "utf8", input: JSON.stringify({ session_id: id, cwd: project }),
+    env: { ...process.env, CLAUDE_PROJECT_DIR: project, CLAUDE_ENV_FILE: envFile },
+  });
+  assert.equal(started.status, 0, started.stderr);
+  const calls = () => (fs.existsSync(gh.log) ? fs.readFileSync(gh.log, "utf8").split("\n").filter(Boolean) : []);
+  const unguarded = (cwd, command) => spawnSync("sh", ["-c", command], { cwd, encoding: "utf8", env });
+  const run = (cwd, command) => {
+    const guard = gate(cwd, ["hook", "bash-guard"], { session_id: id, cwd, tool_input: { command } });
+    if (denied(guard)) return { refusedBy: "hook", output: guard.out };
+    const result = spawnSync("sh", ["-c", `. "${envFile}"\n${command}`], { cwd, encoding: "utf8", env });
+    return { refusedBy: result.stderr.includes("Verification gate:") ? "wrapper" : null, code: result.status, output: result.stdout + result.stderr };
+  };
+  const refAt = (origin, ref) => sh(origin, "git", ["rev-parse", "-q", "--verify", `refs/heads/${ref}`], { check: false }).stdout.trim() || null;
+  return {
+    id,
+    env,
+    envFile,
+    calls,
+    run,
+    /** The command runs, and gh receives one more call. */
+    opens(cwd, command) {
+      const before = calls().length;
+      const attempt = run(cwd, command);
+      assert.equal(attempt.refusedBy, null, `${command}\n${attempt.output}`);
+      assert.equal(calls().length, before + 1, `${command}\n${attempt.output}`);
+    },
+    /** With nothing in its way the command reaches gh; in the session it doesn't. Returns what refused it. */
+    holdsPr(cwd, command) {
+      fs.rmSync(gh.log, { force: true });
+      unguarded(cwd, command);
+      assert.ok(calls().length > 0, `unguarded, this reaches gh: ${command}`);
+      fs.rmSync(gh.log, { force: true });
+      const attempt = run(cwd, command);
+      assert.equal(calls().length, 0, `${command}\n${attempt.output}`);
+      assert.ok(attempt.refusedBy, `${command}\n${attempt.output}`);
+      return attempt.refusedBy;
+    },
+    /** With nothing in its way the command moves `ref` at `origin`; in the session it doesn't. Returns what refused it. */
+    holdsPush(cwd, command, origin, ref = "main") {
+      const before = refAt(origin, ref);
+      unguarded(cwd, command);
+      assert.notEqual(refAt(origin, ref), before, `unguarded, this pushes ${ref}: ${command}`);
+      sh(origin, "git", before ? ["update-ref", `refs/heads/${ref}`, before] : ["update-ref", "-d", `refs/heads/${ref}`]);
+      const attempt = run(cwd, command);
+      assert.equal(refAt(origin, ref), before, `${command}\n${attempt.output}`);
+      assert.ok(attempt.refusedBy, `${command}\n${attempt.output}`);
+      return attempt.refusedBy;
+    },
+  };
+}
+
 // Claude Code runs the gate's hooks in a POSIX shell, Git Bash on Windows, where commands carry
 // forward-slash paths. These tests build commands from native paths, so they run on Linux and macOS.
 describe("verification gate", { skip: process.platform === "win32" }, () => {
   let dir;
   let repo;
   let other;
+  let origin;
   let report;
+  let gh;
+  let session;
   const env = { AGENT_GATE_BASE: "" };
 
   before(() => {
@@ -48,7 +152,8 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     git(repo, "config", "user.email", "test@example.com");
     git(repo, "config", "user.name", "test");
     git(repo, "config", "core.autocrlf", "false");
-    git(repo, "remote", "add", "origin", path.join(dir, "origin.git"));
+    // A file:// URL stands in for the hosting service. The wrappers leave a remote given as a plain directory path alone.
+    git(repo, "remote", "add", "origin", `file://${path.join(dir, "origin.git")}`);
     fs.writeFileSync(path.join(repo, "a.txt"), "base\n");
     fs.writeFileSync(path.join(repo, "m.py"), "x = 1\nif x:\n    y = 2\nreturn_value = y\n");
     fs.writeFileSync(path.join(repo, ".gitignore"), ".env\n.claude/agent-memory-local/\n");
@@ -56,8 +161,17 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     git(repo, "commit", "-qm", "init");
     git(repo, "push", "-q", "origin", "main");
     git(repo, "switch", "-q", "-c", "feature/1-test");
-    sh(dir, "git", ["clone", "-q", path.join(dir, "origin.git"), "other"]);
+    origin = path.join(dir, "origin.git");
+    // A clone next door that nobody verified, on the default branch, with a commit the origin lacks.
+    sh(dir, "git", ["clone", "-q", `file://${origin}`, "other"]);
     other = path.join(dir, "other");
+    git(other, "config", "user.email", "test@example.com");
+    git(other, "config", "user.name", "test");
+    fs.writeFileSync(path.join(other, "unverified.txt"), "unverified\n");
+    git(other, "add", ".");
+    git(other, "commit", "-qm", "unverified");
+    gh = fakeGh(dir);
+    session = startSession(repo, gh, "feature/1-test");
     report = path.join(dir, "report.md");
     fs.writeFileSync(report, "report\n");
   });
@@ -133,38 +247,195 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     assert.ok(denied(hook(repo, "bash-guard", create)), "not pushed");
     git(repo, "push", "-q", "-u", "origin", "feature/1-test");
     assert.equal(hook(repo, "bash-guard", create).out, "");
-    // The forms agents use to ship stay open in a single repository.
+  });
+
+  test("a pull request command is judged in the repository it really runs in", () => {
+    // This repository's pull request passes. The hook reads a command against the directory the session is in, so it
+    // lets each of these through, and the wrapper refuses them where they run or for the repository they name.
+    const script = path.join(dir, "open.sh");
+    const mutation = path.join(dir, "mutation.json");
+    fs.writeFileSync(mutation, JSON.stringify({ query: "mutation { createPullRequest(input: {}) { clientMutationId } }" }));
     for (const command of [
-      `cd ${repo} && gh pr create --title t --body "$(cat <<'EOF'\nSee "the plan" (step 2); done.\nEOF\n)"`,
-      `cd ${repo} && git push -u origin feature/1-test 2>&1 | tail -3`,
-      "gh pr create --title t --body-file - <<'EOF'\nbody\nEOF",
-      "if true; then gh pr create --title t; fi",
-      "gh pr create --title 'Use `x` in y' --body-file body.md",
-    ]) {
-      assert.equal(hook(repo, "bash-guard", bash(repo, command)).out, "", command);
-    }
-    // With a passing verdict here, a pull request command on a line that changes into another repository, or names
-    // another one, would be judged by this repository's verdict, so it is refused.
-    const intoOther = hook(repo, "bash-guard", bash(repo, `cd ${other} && gh pr create --title t`));
-    assert.match(intoOther.out, /changes into .*another repository/);
-    for (const command of [
-      `cd ${other}; gh pr ready 3`,
-      `pushd ${other} && gh pr ready`,
-      `if true; then cd ${other}; fi; gh pr create --title t`,
-      `eval 'cd ${other}' && gh pr create --title t`,
-      `bash -c "cd ${other} && gh pr create --title t"`,
-      "cd $OTHER && gh pr create --title t",
-      `env -C ${other} gh pr create --title t`,
-      "source ./go.sh; gh pr create --title t",
-      `gh pr create --title "x\`cd ${other}\`"`,
+      `cd ${other} && gh pr create --title t`,
+      `(cd ${other} && gh pr ready)`,
+      `D=${other}; cd $D; gh pr create -t t`,
+      `sh -c 'cd ${other}; gh pr create -t t'`,
+      `cd ${other} && echo "pr create -t t" | xargs gh`,
+      `printf 'cd ${other} && gh pr create -t t\\n' > ${script}; sh ${script}`,
+      `cd ${other} && gh pr new -t t`,
+      `cd ${other} && gh prc -t t`,
+      "gh pr create --title t -R o/r",
       "GH_REPO=o/r gh pr create --title t",
-      `GIT_DIR=${other}/.git gh pr create --title t`,
-      "gh pr create --repo o/r --title t",
-      "gh pr -R o/r create --title t",
-      "gh pr ready https://github.com/o/r/pull/1",
+      "gh pr create --title t --head feature/1-test --head unverified",
+      "gh pr ready 8",
+      "gh pr ready https://github.com/o/r/pull/7",
+      `cd ${other} && X=edit; gh pr $X 7 --base main`,
+      `cd ${other} && gh pr edit 7 -Bmain`,
+      // gh reads `--draft` here as the title, so this opens a ready pull request.
+      `cd ${other} && gh pr create --title --draft`,
+      "A=api; gh $A repos/o/r/pulls -f title=t -f head=x",
+      // A GraphQL request from a file, which the hook can't read and the wrapper can.
+      `A=api; gh $A graphql --input ${mutation}`,
+      `A=api; gh $A --input ${mutation} graphql`,
+      `A=api; gh $A graphql -F query=@${mutation}`,
+      `A=api; cat ${mutation} | gh $A graphql --input -`,
     ]) {
-      assert.ok(denied(hook(repo, "bash-guard", bash(repo, command))), command);
+      assert.equal(session.holdsPr(repo, command), "wrapper", command);
     }
+    for (const command of [
+      "gh pr create --title t",
+      `cd ${repo} && gh pr create --title t`,
+      "gh pr new --title t",
+      "gh prc --title t",
+      "gh pr ready 7",
+      "gh pr create --title t --body \"$(cat <<'EOF'\nAll \"done\" (see step 2); run:\n```sh\nnpm test\n```\nEOF\n)\"",
+      `cd ${other} && gh pr create --draft --title t`,
+      `cd ${other} && gh issue view 3`,
+    ]) {
+      session.opens(repo, command);
+    }
+    // Any other GraphQL request passes, with its standard input, as the installer and the sprint scripts send theirs.
+    session.opens(repo, `A=api; echo '{"query":"query { viewer { login } }"}' | gh $A graphql --input -`);
+    assert.match(fs.readFileSync(`${gh.log}.in`, "utf8"), /viewer \{ login \}/);
+  });
+
+  test("a push to the default branch is held however it is spelled", () => {
+    const script = path.join(dir, "push.sh");
+    const included = path.join(dir, "included.cfg");
+    fs.writeFileSync(included, "[core]\n\thooksPath = /dev/null\n");
+    // A submodule of the clone, whose own default branch a command run in it could push.
+    git(other, "-c", "protocol.file.allow=always", "submodule", "add", "-q", `file://${origin}`, "sub");
+    const sub = path.join(other, "sub");
+    fs.writeFileSync(path.join(sub, "s.txt"), "s\n");
+    git(sub, "add", ".");
+    git(sub, "-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-qm", "in the submodule");
+    for (const [command, by] of [
+      [`git -C ${other} push origin main`, "hook"],
+      [`cd ${other} && git push origin HEAD:refs/heads/main`, "hook"],
+      [`cd ${other} && git push --all`, "hook"],
+      // The hook reads the rest against this repository's issue branch, or can't read them at all.
+      [`cd ${other} && git push`, "wrapper"],
+      [`git -C ${other} push`, "wrapper"],
+      [`cd ${other} && git push origin HEAD`, "wrapper"],
+      [`cd ${other} && git push origin @`, "wrapper"],
+      [`cd ${other} && git push origin 'refs/heads/ma*'`, "wrapper"],
+      [`B=main; cd ${other} && git push origin $B`, "wrapper"],
+      [`cd ${other} && git push origin "$(echo main)"`, "wrapper"],
+      [`cd ${other} && echo main | xargs git push origin`, "wrapper"],
+      [`cd ${other} && git config alias.p "push origin main" && git p`, "wrapper"],
+      [`cd ${other} && git -c alias.x='!git push origin main' x`, "wrapper"],
+      [`git -C "\`echo ${other}\`" push origin HEAD`, "wrapper"],
+      [`(cd ${other}; eval "git push origin ma""in")`, "wrapper"],
+      [`printf 'cd ${other} && git push origin main\\n' > ${script}; sh ${script}`, "wrapper"],
+      [`cd ${other} && node -e "require('child_process').execSync('git push origin main')"`, "wrapper"],
+      [`cd ${other} && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.push GIT_CONFIG_VALUE_0=HEAD:main git push`, "wrapper"],
+      // Ways to skip the check itself.
+      [`cd ${other} && git push --no-verify`, "wrapper"],
+      [`cd ${other} && git push --no-verif`, "wrapper"],
+      [`cd ${other} && git -c core.hooksPath=/dev/null push`, "wrapper"],
+      [`cd ${other} && git send-pack ${origin} main`, "wrapper"],
+      [`cd ${other} && git -c include.path=${included} push`, "wrapper"],
+      [`cd ${other} && git config alias.q '-c core.hooksPath=/dev/null push' && git q origin main`, "wrapper"],
+      [`cd ${other} && git -c alias.y='!git push --no-verify origin main' y`, "wrapper"],
+      // Commands Git starts itself, which never meet the wrapper: the check reaches them through the environment.
+      [`cd ${other} && git submodule foreach 'git -c protocol.file.allow=always push origin HEAD:main'`, "wrapper"],
+      [`cd ${other} && git pushes`, "wrapper"],
+      [`cd ${other} && git -c help.autocorrect=immediate psuh`, "wrapper"],
+    ]) {
+      assert.equal(session.holdsPush(repo, command, origin), by, command);
+    }
+  });
+
+  test("ordinary commands pass through the wrappers, and a repository's own hooks still run", () => {
+    const plain = session.run(repo, "command -v git && git status -sb && git log --oneline -1 >/dev/null && git push -q origin feature/1-test");
+    assert.equal(plain.refusedBy, null, plain.output);
+    assert.equal(plain.code, 0, plain.output);
+    assert.match(plain.output, /agent-fleet-shims\/git\n## feature\/1-test/);
+    // A push runs with Git's hooks path pointed at the gate's directory. The repository's own hooks still run there.
+    const ran = path.join(dir, "hooks-ran");
+    const hooksDir = path.join(other, ".git", "hooks");
+    const hookFile = (file, body) => fs.writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    // Git also runs a hook that has no `#!` line, with the shell.
+    fs.writeFileSync(path.join(hooksDir, "pre-push"), `echo pre-push >> ${ran}\n`, { mode: 0o755 });
+    hookFile(path.join(hooksDir, "pre-commit"), `echo pre-commit >> ${ran}`);
+    git(other, "switch", "-q", "-c", "topic");
+    try {
+      const pushed = session.run(repo, `cd ${other} && git push -q -u origin topic`);
+      assert.equal(pushed.refusedBy, null, pushed.output);
+      assert.equal(git(origin, "rev-parse", "topic"), git(other, "rev-parse", "topic"));
+      // A shell alias runs with the same hooks path, and a commit inside it still meets pre-commit.
+      const aliased = session.run(repo, `cd ${other} && echo n > n.txt && git add n.txt && git -c alias.c='!git commit -qm n' c`);
+      assert.equal(aliased.code, 0, aliased.output);
+      assert.deepEqual(fs.readFileSync(ran, "utf8").trim().split("\n"), ["pre-push", "pre-commit"]);
+      // A hooks path of the repository's own is honoured, and its pre-push hook can still stop a push.
+      const custom = path.join(dir, "custom-hooks");
+      fs.mkdirSync(custom);
+      hookFile(path.join(custom, "pre-push"), `echo custom >> ${ran}; exit 1`);
+      git(other, "config", "core.hooksPath", custom);
+      const stopped = session.run(repo, `cd ${other} && git push -q origin topic`);
+      assert.notEqual(stopped.code, 0, stopped.output);
+      assert.notEqual(git(origin, "rev-parse", "topic"), git(other, "rev-parse", "topic"));
+      assert.match(fs.readFileSync(ran, "utf8"), /custom/);
+      // --no-verify still skips the repository's own hook, as it always did, and only that.
+      const skipped = session.run(repo, `cd ${other} && git push -q --no-verify origin topic`);
+      assert.equal(skipped.code, 0, skipped.output);
+      assert.equal(git(origin, "rev-parse", "topic"), git(other, "rev-parse", "topic"));
+    } finally {
+      sh(other, "git", ["config", "--unset", "core.hooksPath"], { check: false });
+      fs.rmSync(path.join(hooksDir, "pre-push"), { force: true });
+      fs.rmSync(path.join(hooksDir, "pre-commit"), { force: true });
+      git(other, "switch", "-q", "main");
+    }
+  });
+  test("the wrappers pass a command's result through, and keep working when the checkout's gate is gone", () => {
+    // Exit status and output are the tool's own.
+    const failed = session.run(repo, "gh fails; echo status=$?");
+    assert.match(failed.output, /status=4/);
+    // An alias for a plain built-in is that built-in, whatever its arguments say.
+    const aliased = session.run(repo, `cd ${other} && git -c alias.ci=commit ci --no-verify --allow-empty -qm "about core.hooksPath"`);
+    assert.equal(aliased.code, 0, aliased.output);
+    // The wrappers run a copy of the gate kept beside them. Here the project's own copy disappears, as it does
+    // after switching to a commit from before the installation.
+    const installed = path.join(dir, "installed-gate.mjs");
+    fs.copyFileSync(GATE, installed);
+    const orphan = startSession(repo, gh, "feature/1-test", { gateFile: installed });
+    fs.rmSync(installed);
+    assert.equal(orphan.holdsPush(repo, `cd ${other} && git push`, origin), "wrapper");
+    assert.equal(orphan.holdsPr(repo, `cd ${other} && gh pr create --title t`), "wrapper");
+    // A Git too old to take settings from the environment would run the push without the check, so it is refused.
+    const oldBin = path.join(dir, "old-git");
+    fs.mkdirSync(oldBin);
+    const realGit = sh(dir, "sh", ["-c", "command -v git"]).stdout.trim();
+    fs.writeFileSync(path.join(oldBin, "git"), `#!/bin/sh\nunset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0\nexec ${realGit} "$@"\n`, { mode: 0o755 });
+    const old = startSession(repo, gh, "feature/1-test", { before: [oldBin] });
+    const refused = old.run(repo, `cd ${other} && git push`);
+    assert.match(refused.output, /needs Git 2\.31 or later/);
+    assert.equal(old.holdsPush(repo, `cd ${other} && git push`, origin), "wrapper");
+  });
+
+  test("the wrappers leave a scratch repository alone, survive a second session, and say when they are missing", () => {
+    // A test suite pushes `main` to a repository it made in a folder. That is not the project's default branch.
+    sh(dir, "git", ["init", "-q", "--bare", "-b", "main", "scratch.git"]);
+    sh(dir, "git", ["init", "-q", "-b", "main", "scratch"]);
+    const scratch = path.join(dir, "scratch");
+    git(scratch, "remote", "add", "origin", path.join(dir, "scratch.git"));
+    fs.writeFileSync(path.join(scratch, "s.txt"), "s\n");
+    git(scratch, "add", ".");
+    git(scratch, "-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-qm", "scratch");
+    const suite = path.join(dir, "suite.sh");
+    fs.writeFileSync(suite, `cd ${scratch} && git push -q origin main\n`);
+    const ran = session.run(repo, `sh ${suite}`);
+    assert.equal(ran.code, 0, ran.output);
+    assert.equal(git(path.join(dir, "scratch.git"), "rev-parse", "main"), git(scratch, "rev-parse", "main"));
+    // Two sessions' wrappers on one PATH, as when a session starts another: each must skip the other's.
+    const second = startSession(other, gh, "main");
+    const both = spawnSync("sh", ["-c", `. "${session.envFile}"; . "${second.envFile}"; git status -sb && gh issue view 3 && echo finished`],
+      { cwd: repo, encoding: "utf8", env: session.env, timeout: 30000 });
+    assert.equal(both.status, 0, both.stderr);
+    assert.match(both.stdout, /finished/);
+    // A tool that gives the session-start hook no way to set PATH: the agent is told the wrappers are missing.
+    const none = gate(repo, ["hook", "session-env"], { session_id: "no-env-file", cwd: repo }, { CLAUDE_PROJECT_DIR: repo, CLAUDE_ENV_FILE: "" });
+    assert.match(none.out, /wrappers are not active in this session/);
   });
 
   test("a clean rebase keeps the verdict; a new commit loses it", () => {
@@ -214,117 +485,20 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     }
   });
 
-  test("the reader reads more than its first version, never less", () => {
-    // Each hides `git push origin main` or a ready pull request. The first reader saw those in heredoc bodies and
-    // comments, which it reads as commands, and missed the rest: behind a shell keyword or a wrapper with options, in a
-    // script a shell takes, in eval or trap, under find -exec, or after a quote or substitution that never closes.
-    for (const command of [
-      "cat <<EOF\n$(git push origin main)\nEOF",
-      "cat <<EOF\n`git push origin main`\nEOF",
-      "# note: see <<EOF\ngit push origin main",
-      "# don't forget\ngit push origin main",
-      "# say \"hi\ngit push origin main",
-      "# see $(x\ngit push origin main",
-      "cat <<'EOF' | sh\ngit push origin main\nEOF",
-      "<<EOF bash\ngit push origin main\nEOF",
-      "bash -c \"$(cat <<'EOF'\ngit push origin main\nEOF\n)\"",
-      "bash <<< \"git push origin main\"",
-      "bash 0<<<'git push origin main'",
-      "((m = 1<<2))\ngit push origin main",
-      "echo ${#x} ; git push origin main",
-      "if true; then git push origin main; fi",
-      "for b in x; do git push origin main; done",
-      "! git push origin main",
-      "env FOO=1 git push origin main",
-      "timeout 10 git push origin main",
-      "sudo -u me git push origin main",
-      "find . -maxdepth 0 -exec sh -c 'git push origin main' {} +",
-      "find . -maxdepth 0 -execdir git push origin main {} +",
-      "bash -c -- 'git push origin main'",
-      "bash -c -x 'git push origin main'",
-      "trap -- 'git push origin main' EXIT",
-      "eval 'git push origin main'",
-      "git push origin 'refs/heads/*'",
-      "git push origin HEAD:heads/main",
-      "git push --branches",
-      "git -c remote.origin.push=HEAD:main push",
-      "echo 'unclosed ; gh pr create --title t",
-      "if true; then gh pr ready 3; fi",
-      "timeout 10 gh pr create --title t",
-      "sudo -u me gh pr ready 3",
-      "gh pr new --title t",
-      "gh pr --repo=o/r ready 3",
-      "gh api graphql -F query=@m.graphql",
-      "gh api -X POST repos/o/r/pulls -f head=x",
-      "gh api --method PATCH repos/o/r/pulls/3",
-    ]) {
-      assert.ok(denied(hook(repo, "bash-guard", bash(repo, command))), command.replace(/\n/g, "\\n"));
-    }
-    for (const command of [
-      "git status # it's fine",
-      "echo ${#x}",
-      "git push -u origin feature/1-test # once",
-      "git commit -m \"$(cat <<'EOF'\nMake git push safer\nEOF\n)\"",
-      "git commit -m \"$(cat <<'EOF'\nDon't let git push reach the default branch\nEOF\n)\"",
-      "git status # then git push",
-      "cat > /tmp/notes.md <<'EOF'\nrun git push origin main later\nEOF",
-      "git push -u origin \"$(git branch --show-current)\"",
-      "echo run gh pr create",
-      "echo git push origin main",
-    ]) {
-      assert.equal(hook(repo, "bash-guard", bash(repo, command)).out, "", command.replace(/\n/g, "\\n"));
-    }
-  });
-
-  test("a push that names no branch is checked in every repository it may run in", () => {
-    // other has main checked out. The first gate checked only this repository's branch.
-    for (const command of [
-      `cd ${other} && git push`,
-      `git -C ${other} push`,
-      `cd ${other}; git push origin HEAD`,
-      `(cd ${other}) && git push -u origin @`,
-      `pushd ${other} && git push`,
-      `if true; then cd ${other}; fi; git push`,
-      `env -C ${other} git push`,
-      `GIT_DIR=${other}/.git git push`,
-      `git --git-dir=${other}/.git push`,
-      "cd $OTHER && git push",
-      `\`echo cd\` ${other} && git push`,
-      "cd - && git push",
-      "git -C $X push",
-      "source ./x.sh; git push",
-    ]) {
-      assert.ok(denied(hook(repo, "bash-guard", bash(repo, command))), command);
-    }
-    for (const command of [
-      `cd ${repo} && git push`,
-      `cd ${other} && git push origin feature/1-test`,
-      `git -C ${repo} push origin HEAD`,
-      "cd missing-dir; git push",
-      "git push -u origin HEAD",
-    ]) {
-      assert.equal(hook(repo, "bash-guard", bash(repo, command)).out, "", command);
-    }
-    // A push refspec in the repository's config pushes the default branch without naming it.
-    git(repo, "config", "remote.origin.push", "HEAD:main");
-    try {
-      assert.ok(denied(hook(repo, "bash-guard", bash(repo, "git push"))), "configured push refspec");
-    } finally {
-      git(repo, "config", "--unset", "remote.origin.push");
-    }
-  });
-
   test("nobody but gate.mjs writes the verdict state", () => {
     const runDir = JSON.parse(gate(repo, ["paths"]).out).runDir;
     const runs = path.dirname(runDir);
     for (const file of [path.join(runDir, "latest.json"), path.join(runDir, "verdicts.jsonl"), path.join(runs, "_tokens", "record-x.json"),
-      path.join(runs, "_locks", "verifier-x.lock")]) {
+      path.join(runs, "_locks", "verifier-x.lock"), path.join(runDir, "workspace.json"),
+      path.join(runs, "_shims", "x", "agent-fleet-shims", "git"), path.join(runs, "_sessions", "session-1")]) {
       assert.ok(denied(hook(repo, "write-scope", { tool_input: { file_path: file } })), `write-scope: ${file}`);
       assert.ok(denied(hook(repo, "state-guard", { tool_input: { file_path: file } })), `state-guard: ${file}`);
     }
     assert.equal(hook(repo, "state-guard", { tool_input: { file_path: path.join(runDir, "round-1", "verification.md") } }).out, "");
     for (const command of [`echo '{}' > ${path.join(runs, "_tokens", "record-x.json")}`, `cp fake.json ${path.join(runDir, "latest.json")}`,
-      "printf x > .git/agent-runs/_locks/verifier-x.lock"]) {
+      "printf x > .git/agent-runs/_locks/verifier-x.lock", `cd ${runDir} && cp /tmp/fake.json latest.json`,
+      "cd .git/agent-runs/feature__1-test && cp /tmp/w.json workspace.json", "rm -rf .git/agent-runs/_shims",
+      "touch .git/agent-runs/_sessions/another-session"]) {
       assert.ok(denied(hook(repo, "bash-guard", bash(repo, command))), command);
     }
     assert.equal(hook(repo, "bash-guard", bash(repo, `cat ${path.join(runDir, "round-1", "verification.md")}`)).out, "");
@@ -389,7 +563,9 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
   let dir;
   let ws;
   let report;
+  let session;
   const child = (name) => path.join(ws, name);
+  const origin = (name) => path.join(dir, "acme", `${name}.git`);
   const commit = (cwd, message) => {
     git(cwd, "add", "-A");
     git(cwd, "commit", "-qm", message);
@@ -400,7 +576,7 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
     git(cwd, "config", "user.name", "test");
     git(cwd, "config", "core.autocrlf", "false");
     sh(dir, "git", ["init", "-q", "--bare", "-b", "main", origin]);
-    git(cwd, "remote", "add", "origin", origin);
+    git(cwd, "remote", "add", "origin", `file://${origin}`);
   };
   const record = (verdict = "PASS") =>
     ["record", "--verdict", verdict, "--blocking", "0", "--issue", "https://example.com/7", "--report", report];
@@ -409,7 +585,7 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
     hook(cwd, "authorize-record", { agent_id: agent, ...bash(cwd, `node .agents/scripts/gate.mjs ${record(verdict).join(" ")}`) });
     return gate(cwd, record(verdict));
   };
-  const allowed = (cwd, command) => hook(cwd, "bash-guard", bash(cwd, command)).out === "";
+  const allowed = (cwd, command) => hook(cwd, "bash-guard", { session_id: session.id, ...bash(cwd, command) }).out === "";
 
   before(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-ws-"));
@@ -427,9 +603,13 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
       init(child(name), path.join(dir, "acme", `${name}.git`));
       fs.writeFileSync(path.join(child(name), "app.txt"), `${name} base\n`);
       commit(child(name), "init");
-      git(child(name), "push", "-q", "origin", "main");
+      git(child(name), "push", "-q", "-u", "origin", "main");
     }
     for (const name of ["a", "b"]) git(child(name), "switch", "-q", "-c", "feature/7-across");
+    // c keeps its default branch checked out, with a commit its origin lacks.
+    fs.appendFileSync(path.join(child("c"), "app.txt"), "unverified\n");
+    commit(child("c"), "unverified");
+    session = startSession(ws, fakeGh(dir), "feature/7-across");
     report = path.join(dir, "report.md");
     fs.writeFileSync(report, "report\n");
   });
@@ -437,22 +617,24 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
 
   test("a verdict for the workspace's own empty patch no longer passes a member's pull request", () => {
     // The way around the gate before workspaces: verify the workspace repository, whose patch is empty because it
-    // ignores its children, then open a child's pull request from the workspace root.
+    // ignores its children, then open a child's pull request from the workspace root. The hook reads the command
+    // against the workspace repository and lets it through. The wrapper judges the child it really runs in.
     assert.equal(verify(ws, "v0").code, 0);
     fs.appendFileSync(path.join(child("a"), "app.txt"), "change\n");
     commit(child("a"), "work");
     git(child("a"), "push", "-q", "-u", "origin", "feature/7-across");
-    for (const command of ["cd a && gh pr create --title t", "gh -R acme/a pr create --title t", "cd a; gh pr ready 3"]) {
-      assert.ok(!allowed(ws, command), command);
+    for (const command of ["cd a && gh pr create --title t", "cd a; gh pr ready", "(cd a && gh pr create --title t)"]) {
+      assert.equal(session.holdsPr(ws, command), "wrapper", command);
     }
-    assert.ok(!allowed(child("a"), "gh pr create --title t"), "from the member itself");
-    // A push that names no branch is checked in each repository the line may run in: c has main checked out.
+    assert.ok(session.holdsPr(ws, "gh -R acme/a pr create --title t"), "named from the root");
+    assert.ok(session.holdsPr(child("a"), "gh pr create --title t"), "from the member itself");
+    // The same for a push: c has its default branch checked out.
     for (const command of ["cd c && git push", "git -C c push", "cd c; git push origin HEAD"]) {
-      assert.ok(!allowed(ws, command), command);
+      assert.equal(session.holdsPush(ws, command, origin("c")), "wrapper", command);
     }
-    assert.ok(allowed(ws, "cd a && git push"), "a has the issue branch checked out");
+    const pushed = session.run(ws, "cd a && git push");
+    assert.equal(pushed.refusedBy, null, pushed.output);
   });
-
   test("workspace set names members that are repositories of their own", () => {
     assert.notEqual(gate(ws, ["workspace", "set", "../x"]).code, 0, "outside the root");
     assert.notEqual(gate(ws, ["workspace", "set", "nope"]).code, 0, "not a repository");
@@ -493,72 +675,60 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
   });
 
   test("a member's ready pull request needs its own pushed patch and every other member's verified patch", () => {
-    assert.ok(allowed(child("a"), "gh pr create --title t"), "from the member itself");
-    assert.ok(allowed(ws, "gh -R acme/a pr create --head feature/7-across --title t"), "--repo and --head from the root");
-    assert.ok(allowed(ws, "gh pr create --repo acme/a --head feature/7-across --title t"), "--repo after the subcommand");
-    assert.ok(!allowed(ws, "gh -R acme/a pr create --title t"), "--repo for another repository needs --head");
-    assert.ok(!allowed(ws, "gh -R acme/a pr create --head other --title t"), "--head must be the branch the gate checks");
-    assert.ok(!allowed(ws, "gh pr create --repo acme/c --head feature/7-across --title t"), "c is not a member");
-    assert.ok(!allowed(child("a"), "gh pr create --repo acme/b --title t"), "--repo after the subcommand counts");
-    assert.ok(!allowed(ws, "gh -R acme/a pr ready 3"), "ready for another repository runs from its directory");
-    assert.ok(!allowed(child("a"), "gh pr ready https://github.com/acme/c/pull/1"), "a URL of another repository");
-    assert.ok(!allowed(child("a"), "gh pr edit https://github.com/acme/c/pull/1 --base main"), "retarget by URL elsewhere");
-    assert.ok(!allowed(child("a"), "gh pr edit --base main https://github.com/acme/c/pull/1"), "a selector URL after the flags");
-    assert.ok(allowed(child("a"), "gh pr ready https://github.com/acme/a/pull/1"), "a URL of this repository");
-    assert.ok(allowed(child("a"), "gh pr create --title t --body 'Part of https://github.com/acme/b/pull/2'"), "a companion link in the body");
-    assert.ok(allowed(child("a"), "echo $(date) && gh pr create --title t"), "a substitution that changes no directory");
-    assert.ok(allowed(child("a"), "gh pr create --title t --body \"$(cat <<'EOF'\nA \"quoted\" body (with a paren; and a semicolon), that doesn't end early\nEOF\n)\""),
-      "a heredoc body with quotes, parentheses and an apostrophe");
-    // Heredoc bodies are read as commands, so a body that reads like a push to the default branch goes in a file.
-    assert.ok(!allowed(child("a"), "gh pr create --title t --body \"$(cat <<'EOF'\nFirst run:\ngit push origin main\nEOF\n)\""),
-      "a body that reads like a push");
-    assert.ok(allowed(child("a"), "gh pr create --title t --body-file /tmp/body.md"), "the body in a file");
-    assert.ok(allowed(child("a"), 'gh pr create --title "Fix (x) & y" 2>&1'), "quotes and redirections don't count");
-    assert.ok(allowed(ws, "cd a && git push -u origin feature/7-across 2>&1 | tail -3"), "a push that names its branch");
-    assert.ok(!allowed(child("b"), "gh pr create --title t"), "b is not pushed");
-    assert.ok(!allowed(child("c"), "gh pr create --title t"), "c is not a member, and has no verdict of its own");
-    assert.ok(!allowed(ws, "gh pr create --title t"), "the workspace repository is not a member");
+    // However the command reaches the member: from its directory, after a cd from the root, or by naming it.
+    for (const [cwd, command] of [
+      [child("a"), "gh pr create --title t"],
+      [ws, "cd a && gh pr create --title t"],
+      [ws, "gh pr create --repo acme/a --head feature/7-across --title t"],
+      [ws, "gh -R acme/a pr create --title t"],
+      [ws, "gh pr create -Racme/a -Hfeature/7-across --title t"],
+      [child("b"), "cd ../a && gh pr ready 7"],
+      [child("a"), "gh pr ready https://github.com/acme/a/pull/7"],
+      [child("a"), "gh pr create --title t --body 'Part of https://github.com/acme/b/pull/2'"],
+      [child("a"), "gh pr create --title t --body \"$(cat <<'EOF'\nA \"quoted\" body (with a paren; and a semicolon)\nEOF\n)\""],
+    ]) {
+      session.opens(cwd, command);
+    }
+    for (const [cwd, command, why] of [
+      [ws, "gh -R acme/a pr create --head other --title t", "--head must be the branch the gate checks"],
+      [ws, "gh pr create --repo acme/c --head main --title t", "c is not a member"],
+      [ws, "gh pr create --repo acme/a --repo acme/c --title t", "gh uses the last --repo"],
+      [child("a"), "GH_REPO=acme/c gh pr create --title t", "GH_REPO names another repository"],
+      [child("a"), "gh pr ready 8", "another branch's pull request"],
+      [child("a"), "gh pr ready https://github.com/acme/c/pull/7", "a URL of another repository"],
+      [child("a"), "gh pr edit https://github.com/acme/c/pull/7 --base main", "retarget by URL elsewhere"],
+      [ws, "cd b && gh pr create --title t", "b is not pushed"],
+      [child("a"), "cd ../b && gh pr create --title t", "b is not pushed, whatever a's state"],
+      [ws, "cd c && gh pr create --title t", "c is not a member, and has no verdict of its own"],
+      [ws, "gh pr create --title t", "the workspace repository is not a member"],
+    ]) {
+      assert.equal(session.holdsPr(cwd, command), "wrapper", `${command}: ${why}`);
+    }
     fs.appendFileSync(path.join(child("b"), "app.txt"), "after verification\n");
     commit(child("b"), "late");
-    assert.ok(!allowed(child("a"), "gh pr create --title t"), "b changed after verification");
+    assert.ok(session.holdsPr(child("a"), "gh pr create --title t"), "b changed after verification");
     git(child("b"), "reset", "-q", "--hard", "HEAD~1");
-    assert.ok(allowed(child("a"), "gh pr create --title t"), "b is back to the verified patch");
+    session.opens(child("a"), "gh pr create --title t");
   });
-
-  test("a pull request command never runs on a line that changes into another repository", () => {
-    // a's pull request passes from a's directory, so each of these would be judged by a's verdict while it acts on b,
-    // or from the workspace root, which is not a member.
-    assert.ok(allowed(child("a"), "gh pr create --title t"));
-    assert.ok(allowed(child("a"), `cd ${child("a")} && gh pr create --title t`), "a cd within the same repository");
-    assert.match(hook(ws, "bash-guard", bash(ws, "cd a && gh pr create --title t")).out, /--repo <owner>\/<name> --head <branch>/);
-    for (const command of [
-      "cd ../b && gh pr create --title t",
-      "(cd ../b) ; gh pr create --title t",
-      "cd ../b & gh pr create --title t",
-      "cd ../b || gh pr create --title t",
-      "cd ../b && true; gh pr create --title t",
-      "cd ../b; popd; gh pr create --title t",
-      'bash -c "gh pr create --title t"; cd ../b',
-      "if true; then cd ../b; fi; gh pr create --title t",
-      "builtin cd ../b && gh pr create --title t",
-      "pushd ../b && gh pr create --title t",
-      "cd .. && gh pr create --title t",
-      "eval 'cd ../b' && gh pr create --title t",
-      'bash -c "cd ../b && gh pr create --title t"',
-      "bash <<'EOF'\ncd ../b\ngh pr create --title t\nEOF",
-      "cd $REPO && gh pr create --title t",
-      "env -C ../b gh pr create --title t",
-      "sudo -D ../b gh pr create --title t",
-      "source ./go.sh; gh pr create --title t",
-      'gh pr create --title "x`cd ../b`"',
-      "`echo cd` ../b && gh pr create --title t",
-      "GH_REPO=acme/b gh pr create --title t",
-      "GIT_DIR=../b/.git GIT_WORK_TREE=../b gh pr create --title t",
+  test("without the wrappers, nothing in a workspace pushes or opens a pull request", () => {
+    // Which repository a command acts on depends on where it runs, and only the wrappers see that. A session whose
+    // session-start hook didn't run has none, so the hook refuses there what it would otherwise leave to them.
+    const bare = (cwd, command) => hook(cwd, "bash-guard", { session_id: "another-session", ...bash(cwd, command) });
+    for (const [cwd, command] of [
+      [ws, "cd a && gh pr create --title t"],
+      [child("a"), "gh pr create --title t"],
+      [ws, "git -C a push -u origin feature/7-across"],
+      [child("a"), "git push"],
     ]) {
-      assert.ok(!allowed(child("a"), command), command);
+      assert.match(bare(cwd, command).out, /This session has none/, command);
+      assert.ok(denied(hook(cwd, "bash-guard", bash(cwd, command))), `no session at all: ${command}`);
     }
+    for (const command of ["git status", "gh pr create --draft --title t", "gh pr view 3"]) {
+      assert.equal(bare(ws, command).out, "", command);
+    }
+    // Outside a workspace nothing changes: c answers to no workspace, and the hook judges it as it always did.
+    assert.equal(bare(child("c"), "git push -u origin topic").out, "");
   });
-
   test("workspace state is protected from a member's directory too", () => {
     const runDir = JSON.parse(gate(ws, ["paths"]).out).runDir;
     const latest = path.join(runDir, "latest.json");
@@ -583,33 +753,40 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
     assert.equal(JSON.parse(gate(child("a"), ["set-base", base, "--repo", "b"]).out).path, "b");
   });
 
-  test("in a workspace, a push names its branch", () => {
-    for (const command of [
-      "git push", "git -C a push", "git -C a push -u origin HEAD", "git -C a push origin @", "cd a && git push",
-      'git -C a push -u origin "$(git branch --show-current)"', "git -C c push origin main", "git -C $X push", "(cd c) && git push",
-      'cd c && git push -o "`cd ..`"', "if true; then cd c; fi; git push", "command cd c; git push",
-      "git --git-dir=c/.git --work-tree=c push", "GIT_DIR=c/.git git push", "export GIT_DIR=c/.git; git push", "git -C c -C . push",
-      "bash <<'EOF'\ncd c\ngit push\nEOF",
+  test("in a workspace, a push is checked in the repository it runs in", () => {
+    for (const [command, by] of [
+      ["git -C c push origin main", "hook"],
+      ["git -C c push", "wrapper"],
+      ["cd c && git push", "wrapper"],
+      ["git -C c push -u origin HEAD", "wrapper"],
+      ["GIT_DIR=c/.git git push", "wrapper"],
+      ["git --git-dir=c/.git --work-tree=c push", "wrapper"],
+      ["X=c; git -C $X push", "wrapper"],
     ]) {
-      assert.ok(!allowed(ws, command), command);
+      assert.equal(session.holdsPush(ws, command, origin("c")), by, command);
     }
-    assert.ok(!allowed(child("a"), "git push"), "from inside a member too");
-    for (const command of ["git -C a push -u origin feature/7-across", "cd a && git push -u origin feature/7-across", "git push origin feature/7-across"]) {
-      assert.ok(allowed(ws, command), command);
+    for (const [cwd, command] of [
+      [ws, "git -C a push -u origin feature/7-across"],
+      [ws, "cd a && git push"],
+      [ws, "git push origin feature/7-across"],
+      [child("a"), "git push"],
+      [child("a"), 'git push -u origin "$(git branch --show-current)"'],
+    ]) {
+      const pushed = session.run(cwd, command);
+      assert.equal(pushed.refusedBy, null, `${command}\n${pushed.output}`);
+      assert.equal(pushed.code, 0, `${command}\n${pushed.output}`);
     }
-    assert.ok(allowed(child("a"), "git push -u origin feature/7-across"), "from inside a member");
     // A member's own default branch is protected too, whatever its name.
     git(child("a"), "update-ref", "refs/remotes/origin/trunk", "HEAD");
     git(child("a"), "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk");
     try {
-      assert.ok(!allowed(ws, "git -C a push origin trunk"), "a's default branch");
-      assert.ok(!allowed(child("b"), "git push origin feature/7-across:trunk"), "from another member");
+      assert.equal(session.holdsPush(ws, "git -C a push origin feature/7-across:trunk", origin("a"), "trunk"), "wrapper");
+      assert.equal(session.holdsPush(child("b"), "cd ../a && git push origin HEAD:trunk", origin("a"), "trunk"), "wrapper");
     } finally {
       git(child("a"), "symbolic-ref", "--delete", "refs/remotes/origin/HEAD");
       git(child("a"), "update-ref", "-d", "refs/remotes/origin/trunk");
     }
   });
-
   test("a later member change needs a fresh verdict, recorded from the workspace root", () => {
     fs.appendFileSync(path.join(child("a"), "app.txt"), "round two\n");
     assert.notEqual(gate(ws, ["check"]).code, 0);
@@ -629,7 +806,7 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
     const check = gate(ws, ["check"]);
     assert.notEqual(check.code, 0);
     assert.match(check.out, /now names a, b, c, but the latest verdict covers a, b/);
-    assert.ok(!allowed(child("a"), "gh pr create --title t"));
+    assert.equal(session.holdsPr(child("a"), "gh pr create --title t"), "hook");
     assert.equal(gate(ws, ["workspace", "set", "a", "b"]).code, 0);
   });
 

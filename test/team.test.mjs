@@ -14,7 +14,7 @@ const field = (frontmatter, key) => {
   const raw = Object.fromEntries(frontmatter)[key];
   return raw === undefined ? undefined : checks.scalar(raw);
 };
-const GATE_HOOKS = ["bash-guard", "state-guard", "verifier-start", "verifier-stop", "observe-only", "authorize-record", "write-scope", "agent-scope"];
+const GATE_HOOKS = ["bash-guard", "session-env", "state-guard", "verifier-start", "verifier-stop", "observe-only", "authorize-record", "write-scope", "agent-scope"];
 const BRIEFS = checks.listFiles(path.join(ROOT, "skills/lead-issue/briefs")).map((file) => file.replace(/\.md$/, ""));
 const LEAD_FILES = ["skills/lead-issue/SKILL.md", ...BRIEFS.map((name) => `skills/lead-issue/briefs/${name}.md`)];
 // Vendors, products and accounts that no shipped file may name.
@@ -74,7 +74,7 @@ describe("agent team", () => {
     assert.ok(settings.permissions.deny.includes("Bash(gh pr merge *)"));
     assert.ok(settings.permissions.ask.includes("Bash(gh issue create *)"));
     const commands = JSON.stringify(settings.hooks);
-    for (const sub of ["bash-guard", "state-guard", "verifier-start", "verifier-stop"]) assert.ok(commands.includes(`hook ${sub}`), sub);
+    for (const sub of ["bash-guard", "state-guard", "session-env", "verifier-start", "verifier-stop"]) assert.ok(commands.includes(`hook ${sub}`), sub);
   });
 
   test("the team names no vendor, product or account", () => {
@@ -308,6 +308,47 @@ describe("second opinion", () => {
       assert.match(patch, /\+member change/);
       assert.doesNotMatch(patch, /hunter2|swordfish/);
       assert.match(patch, /public notes/, "a file that only shares a protected file's name stays in");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a member nested in another member finds the workspace's profile and runs its command from there", { skip: process.platform === "win32" }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-so-nested-"));
+    try {
+      const ws = path.join(dir, "ws");
+      const outer = path.join(ws, "a");
+      const sub = path.join(outer, "sub");
+      const git = (cwd, ...args) => spawnSync("git", args, { cwd, encoding: "utf8" });
+      for (const repo of [ws, outer, sub]) {
+        fs.mkdirSync(repo, { recursive: true });
+        spawnSync("git", ["init", "-q", "-b", "main", repo]);
+        git(repo, "config", "user.email", "test@example.com");
+        git(repo, "config", "user.name", "test");
+      }
+      // The command is a path relative to the workspace root, where it is installed.
+      fs.writeFileSync(path.join(ws, "reviewer.mjs"), "import fs from 'node:fs';\nfs.writeFileSync(process.env.OUT, 'NESTED REVIEW\\n');\n");
+      fs.mkdirSync(path.join(ws, "docs/agents"), { recursive: true });
+      fs.mkdirSync(path.join(ws, ".agents"));
+      fs.writeFileSync(path.join(ws, "docs/agents/autonomy.md"), "| Command | `node ./reviewer.mjs` |\n");
+      fs.writeFileSync(path.join(ws, "docs/agents/verification.md"), "## Protected files\n\n- `a/sub/config/secrets.yml`\n");
+      fs.writeFileSync(path.join(outer, ".gitignore"), "/sub/\n");
+      fs.writeFileSync(path.join(sub, "s.txt"), "base\n");
+      git(sub, "add", ".");
+      git(sub, "commit", "-qm", "init");
+      const base = git(sub, "rev-parse", "HEAD").stdout.trim();
+      fs.appendFileSync(path.join(sub, "s.txt"), "nested change\n");
+      fs.mkdirSync(path.join(sub, "config"));
+      fs.writeFileSync(path.join(sub, "config/secrets.yml"), "pw: hunter2\n");
+      const out = path.join(dir, "evidence", "second-opinion.md");
+      const result = spawnSync(process.execPath, [path.join(ROOT, "lib/second-opinion.mjs"), base, sub, "https://example.com/7", out],
+        { encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /Second opinion written/);
+      assert.equal(fs.readFileSync(out, "utf8"), "NESTED REVIEW\n");
+      const patch = fs.readFileSync(path.join(dir, "evidence", "second-opinion.patch"), "utf8");
+      assert.match(patch, /\+nested change/);
+      assert.doesNotMatch(patch, /hunter2/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
