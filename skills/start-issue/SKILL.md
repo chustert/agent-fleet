@@ -295,6 +295,31 @@ local Git branch description when supported, and always include them in the
 handoff. The local description is convenience metadata, not a substitute for
 linking the issue in the eventual pull request.
 
+### Worktrees in a workspace
+
+In a workspace of independent repositories, the workspace's own Git ignores the
+child repositories, so a worktree of the workspace contains none of them. This
+checkout is such a worktree when `git worktree list --porcelain`, run in it,
+names a different path first: the main checkout. Then create each affected
+child repository's branch as a worktree at the same relative path inside this
+checkout, instead of switching branches in the main checkout's copy, which
+other sessions may be using:
+
+```bash
+git -C <main-checkout>/<child-path> fetch origin
+git -C <main-checkout>/<child-path> worktree add -b <branch> <this-checkout>/<child-path> <base-commit>
+```
+
+The worktree takes the place of the switch in step 4; the other steps still
+apply, and the main checkout's copy may stay dirty because nothing switches
+there. Every path in the documents and the profile keeps resolving, because
+each child sits where it sits in the main checkout. A new worktree has none of
+the ignored local files. Provide only the ones the `Review worktree setup`
+section of `docs/agents/verification.md` lists, in the way it says, and never
+copy or link a protected file it does not allow. In the main checkout itself,
+switch branches in each child as the steps above describe, one issue at a time.
+Record each worktree's path in the start record.
+
 ## Local and remote branch policy
 
 Create local branches during this workflow. Do not push an empty branch or set
@@ -380,7 +405,8 @@ Report a self-contained start record containing:
   blocking relationships;
 - for every affected repository: local path, branch name, category, base ref,
   base commit SHA, checkout state, worktree cleanliness, and remote/upstream
-  state;
+  state, and, in a workspace, its path from the workspace root and whether it
+  is a worktree inside this checkout;
 - the recommendation to keep the branch local until its first meaningful
   commit, or the explicitly authorized reason it was pushed earlier;
 - the authenticated starter login and verified assignment while preserving the

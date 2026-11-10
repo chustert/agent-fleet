@@ -1,6 +1,6 @@
 {
   "name": "@chustert/agent-fleet",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Workflow skills and a Claude Code agent team that plan, build, verify and review GitHub issues, for any project.",
   "license": "MIT",
   "author": "Christian Hustert",

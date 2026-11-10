@@ -38,7 +38,11 @@ The `proof-standards` skill is loaded above. Apply it to every claim you make.
 1. **Scope.** Run `node .agents/scripts/gate.mjs paths` and check the branch
    and base match your brief. If they don't, stop and report; never verify the
    wrong diff. Read the issue and every comment yourself. The brief's list of
-   author claims is something to audit, not evidence.
+   author claims is something to audit, not evidence. In a workspace of
+   several repositories, run every gate command from the workspace root:
+   `paths` lists each member with its branch and base, the fingerprint covers
+   them all, and you verify each member and then every boundary's
+   `Local check` from your brief.
 
 2. **Verify the work.** Follow `verify-work` (`.agents/skills/verify-work/`)
    in full, with these additions:

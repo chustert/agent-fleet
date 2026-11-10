@@ -191,6 +191,19 @@ describe("lead-issue", () => {
     }
   });
 
+  test("the workspace steps are named where they're needed, in the skill and in the team", () => {
+    const flat = (file) => read(file).replace(/\s+/g, " ");
+    for (const file of ["skills/lead-issue/SKILL.md", "agents/engineering-lead.md"]) {
+      assert.ok(flat(file).includes("node .agents/scripts/gate.mjs workspace set <path>..."), `${file}: workspace set`);
+      assert.ok(flat(file).includes("set-base <base-commit> --repo <path>"), `${file}: set-base --repo`);
+    }
+    for (const file of ["skills/lead-issue/briefs/verifier.md", "agents/verifier.md", "skills/lead-issue/briefs/developer.md"]) {
+      assert.ok(flat(file).includes("workspace root"), `${file}: gate commands from the workspace root`);
+    }
+    assert.ok(flat("skills/start-issue/SKILL.md").includes("worktree add -b <branch> <this-checkout>/<child-path> <base-commit>"));
+    assert.ok(flat("skills/lead-issue/briefs/verifier.md").includes("`Local check`"));
+  });
+
   test("it names no coding tool, vendor, product or account", () => {
     const tools = /\b(Claude|Anthropic|T3|Cursor|Kiro|OpenCode)\b/;
     const found = LEAD_FILES.flatMap((file) => read(file).split("\n").map((line, index) => [file, index + 1, line]))
@@ -238,6 +251,47 @@ describe("second opinion", () => {
       const patch = fs.readFileSync(path.join(dir, "evidence", "second-opinion.patch"), "utf8");
       assert.match(patch, /\+change/);
       assert.doesNotMatch(patch, /hunter2|K=1/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a workspace member without a profile of its own uses the workspace's", { skip: process.platform === "win32" }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-so-ws-"));
+    try {
+      const ws = path.join(dir, "ws");
+      const app = path.join(ws, "app");
+      const git = (cwd, ...args) => spawnSync("git", args, { cwd, encoding: "utf8" });
+      for (const repo of [ws, app]) {
+        fs.mkdirSync(repo, { recursive: true });
+        spawnSync("git", ["init", "-q", "-b", "main", repo]);
+        git(repo, "config", "user.email", "test@example.com");
+        git(repo, "config", "user.name", "test");
+      }
+      const fake = path.join(dir, "fake-reviewer.mjs");
+      fs.writeFileSync(fake, "import fs from 'node:fs';\nfs.writeFileSync(process.env.OUT, 'WORKSPACE REVIEW\\n');\n");
+      fs.mkdirSync(path.join(ws, "docs/agents"), { recursive: true });
+      fs.writeFileSync(path.join(ws, "docs/agents/autonomy.md"), `| Command | \`node ${fake}\` |\n`);
+      fs.writeFileSync(path.join(ws, "docs/agents/verification.md"), "## Protected files\n\n- `config/secrets.yml`\n");
+      fs.writeFileSync(path.join(ws, ".gitignore"), "/app/\n");
+      git(ws, "add", ".");
+      git(ws, "commit", "-qm", "init");
+      fs.writeFileSync(path.join(app, "a.txt"), "base\n");
+      git(app, "add", ".");
+      git(app, "commit", "-qm", "init");
+      const base = git(app, "rev-parse", "HEAD").stdout.trim();
+      fs.appendFileSync(path.join(app, "a.txt"), "member change\n");
+      fs.mkdirSync(path.join(app, "config"));
+      fs.writeFileSync(path.join(app, "config/secrets.yml"), "pw: hunter2\n");
+      const out = path.join(dir, "evidence", "second-opinion.md");
+      const result = spawnSync(process.execPath, [path.join(ROOT, "lib/second-opinion.mjs"), base, app, "https://example.com/7", out],
+        { encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /Second opinion written/);
+      assert.equal(fs.readFileSync(out, "utf8"), "WORKSPACE REVIEW\n");
+      const patch = fs.readFileSync(path.join(dir, "evidence", "second-opinion.patch"), "utf8");
+      assert.match(patch, /\+member change/);
+      assert.doesNotMatch(patch, /hunter2/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

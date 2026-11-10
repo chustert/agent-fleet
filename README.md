@@ -215,6 +215,8 @@ The sprint scripts cover the repositories in the routing table of `docs/agents/i
 
 `lead-issue` works in any coding tool, because it starts each role the way the tool allows: as a subagent, as a separate thread such as a delegated task in T3 Code, or, when the tool has neither, as a brief file you open in a new session. The role briefs live in `skills/lead-issue/briefs/`, and every agent leaves its records in the run directory inside the repository's Git directory, which all worktrees share. `docs/agents/autonomy.md` decides which approval gates the lead answers for you. Without it, the lead asks at every gate.
 
+In a workspace of several repositories, `start-issue` creates each affected repository's branch as a worktree inside the workspace's worktree, at the same path as in the main checkout, so a T3 Code worktree thread gets the child repositories it needs and parallel issues don't share one checkout. The lead names those repositories to the gate, the verifier checks each one and then every boundary's `Local check`, and the developer opens one pull request per repository, linked to the umbrella issue, in the merge order the change note gives.
+
 With the agent team installed, the lead starts each verifier as the team's `verifier` agent, so the gate's hooks hold a ready pull request until a recorded verdict covers the exact patch. Without the team, nothing enforces that: the developer compares the verdict's patch fingerprint with the commit before it pushes and opens the pull request, the pull request says so, and the lead checks the fingerprint again afterwards.
 
 ### Choose the models agents start on
@@ -280,7 +282,8 @@ The design follows pstack's approach to verifying agent work: the agent that wro
 2. The verdict is tied to the patch's `git patch-id --verbatim` fingerprint, taken when the verifier starts. Any later edit needs a new verdict; a clean rebase keeps it.
 3. On `FAIL`, the lead passes the findings verbatim to the developer, and a new verifier checks the next round. After the round limit, the lead asks you.
 4. A hook refuses `gh pr create` and `gh pr ready`, however they're phrased, unless the latest verdict passes for the committed and pushed patch. Draft pull requests stay open to all, so CI can run early.
-5. Hooks in the verifier's and reviewer's definitions keep them from editing the checkout, writing to Git or GitHub, or spawning anything but their reviewers, and only a running verifier can record a verdict. These are guardrails against mistakes and shortcuts, not a sandbox.
+5. In a workspace that holds several independent repositories, `gate.mjs workspace set` names the repositories an issue changes. One verdict then covers each of their patches, and a ready pull request in any of them needs every one to still match. The hook judges each command in the repository it really runs in, following `cd`, `git -C` and `gh --repo`, and refuses a command whose repository it can't tell, so a verdict for one repository can't let another's pull request or default-branch push through.
+6. Hooks in the verifier's and reviewer's definitions keep them from editing the checkout, writing to Git or GitHub, or spawning anything but their reviewers, and only a running verifier can record a verdict. These are guardrails against mistakes and shortcuts, not a sandbox.
 
 Run `create-verification-harness` once per project, through the lead ("set up the verification harness"), before relying on verdicts. Without a harness, the verifier improvises the drive every time.
 

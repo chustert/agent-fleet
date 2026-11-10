@@ -248,3 +248,161 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     assert.ok(denied(spawn("developer")));
   });
 });
+
+// A workspace: a repository whose own Git ignores the independent child repositories in its subfolders.
+describe("verification gate in a workspace", { skip: process.platform === "win32" }, () => {
+  let dir;
+  let ws;
+  let report;
+  const child = (name) => path.join(ws, name);
+  const commit = (cwd, message) => {
+    git(cwd, "add", "-A");
+    git(cwd, "commit", "-qm", message);
+  };
+  const init = (cwd, origin) => {
+    sh(path.dirname(cwd), "git", ["init", "-q", "-b", "main", path.basename(cwd)]);
+    git(cwd, "config", "user.email", "test@example.com");
+    git(cwd, "config", "user.name", "test");
+    git(cwd, "config", "core.autocrlf", "false");
+    sh(dir, "git", ["init", "-q", "--bare", "-b", "main", origin]);
+    git(cwd, "remote", "add", "origin", origin);
+  };
+  const record = (verdict = "PASS") =>
+    ["record", "--verdict", verdict, "--blocking", "0", "--issue", "https://example.com/7", "--report", report];
+  const verify = (cwd, agent, verdict = "PASS") => {
+    hook(cwd, "verifier-start", { agent_id: agent });
+    hook(cwd, "authorize-record", { agent_id: agent, ...bash(cwd, `node .agents/scripts/gate.mjs ${record(verdict).join(" ")}`) });
+    return gate(cwd, record(verdict));
+  };
+  const allowed = (cwd, command) => hook(cwd, "bash-guard", bash(cwd, command)).out === "";
+
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-ws-"));
+    fs.mkdirSync(path.join(dir, "acme"));
+    ws = path.join(dir, "ws");
+    init(ws, path.join(dir, "acme", "ws.git"));
+    fs.mkdirSync(path.join(ws, ".agents"));
+    fs.writeFileSync(path.join(ws, ".agents", "README.md"), "fleet\n");
+    fs.writeFileSync(path.join(ws, ".gitignore"), "/a/\n/b/\n/c/\n");
+    commit(ws, "init");
+    git(ws, "push", "-q", "origin", "main");
+    git(ws, "switch", "-q", "-c", "feature/7-across");
+    git(ws, "push", "-q", "-u", "origin", "feature/7-across");
+    for (const name of ["a", "b", "c"]) {
+      init(child(name), path.join(dir, "acme", `${name}.git`));
+      fs.writeFileSync(path.join(child(name), "app.txt"), `${name} base\n`);
+      commit(child(name), "init");
+      git(child(name), "push", "-q", "origin", "main");
+    }
+    for (const name of ["a", "b"]) git(child(name), "switch", "-q", "-c", "feature/7-across");
+    report = path.join(dir, "report.md");
+    fs.writeFileSync(report, "report\n");
+  });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  test("a verdict for the workspace's own empty patch no longer passes a member's pull request", () => {
+    // The way around the gate before workspaces: verify the workspace repository, whose patch is empty because it
+    // ignores its children, then open a child's pull request from the workspace root.
+    assert.equal(verify(ws, "v0").code, 0);
+    fs.appendFileSync(path.join(child("a"), "app.txt"), "change\n");
+    commit(child("a"), "work");
+    git(child("a"), "push", "-q", "-u", "origin", "feature/7-across");
+    for (const command of ["cd a && gh pr create --title t", "gh -R acme/a pr create --title t", "cd a; gh pr ready 3"]) {
+      assert.ok(!allowed(ws, command), command);
+    }
+    assert.ok(!allowed(child("a"), "gh pr create --title t"), "from the member itself");
+  });
+
+  test("workspace set names members that are repositories of their own", () => {
+    assert.notEqual(gate(ws, ["workspace", "set", "../x"]).code, 0, "outside the root");
+    assert.notEqual(gate(ws, ["workspace", "set", "nope"]).code, 0, "not a repository");
+    fs.mkdirSync(path.join(ws, "plain"));
+    assert.notEqual(gate(ws, ["workspace", "set", "plain"]).code, 0, "a folder of the workspace repository");
+    const set = gate(ws, ["workspace", "set", "a", "b/"]);
+    assert.equal(set.code, 0, set.err);
+    assert.deepEqual(JSON.parse(set.out).members.map((m) => m.path), ["a", "b"]);
+    for (const name of ["a", "b"]) {
+      const base = git(child(name), "rev-parse", "main");
+      assert.equal(JSON.parse(gate(ws, ["set-base", base, "--repo", name]).out).base, base);
+    }
+    const paths = JSON.parse(gate(ws, ["paths"]).out);
+    assert.deepEqual(paths.members.map((m) => [m.path, m.branch]), [["a", "feature/7-across"], ["b", "feature/7-across"]]);
+  });
+
+  test("the fingerprint covers every member, from the root or from inside a member", () => {
+    fs.appendFileSync(path.join(child("b"), "app.txt"), "b change\n");
+    const fromRoot = JSON.parse(gate(ws, ["fingerprint"]).out);
+    assert.match(fromRoot.fingerprint, /^workspace-/);
+    assert.deepEqual(fromRoot.repos.map((r) => r.path), ["a", "b"]);
+    assert.equal(JSON.parse(gate(child("a"), ["fingerprint"]).out).fingerprint, fromRoot.fingerprint);
+    assert.equal(JSON.parse(gate(ws, ["fingerprint", "--repo", "b"]).out).fingerprint, fromRoot.repos[1].fingerprint);
+    assert.match(gate(child("b"), ["diff"]).out, /\+b change/, "diff stays per repository");
+    fs.appendFileSync(path.join(child("c"), "app.txt"), "unrelated\n");
+    assert.equal(JSON.parse(gate(ws, ["fingerprint"]).out).fingerprint, fromRoot.fingerprint, "a non-member doesn't count");
+  });
+
+  test("the verdict records every member, and the committed check needs every commit", () => {
+    const recorded = verify(child("a"), "v1");
+    assert.equal(recorded.code, 0, recorded.err);
+    assert.deepEqual(JSON.parse(recorded.out).repos.map((r) => r.path), ["a", "b"]);
+    assert.equal(hook(ws, "verifier-stop", { agent_id: "v1" }).code, 0);
+    assert.equal(gate(ws, ["check"]).code, 0);
+    assert.notEqual(gate(ws, ["check", "--committed"]).code, 0, "b is not committed");
+    commit(child("b"), "b work");
+    assert.equal(gate(ws, ["check", "--committed"]).code, 0);
+  });
+
+  test("a member's ready pull request needs its own pushed patch and every other member's verified patch", () => {
+    assert.ok(allowed(ws, "cd a && gh pr create --title t"), "cd from the root");
+    assert.ok(allowed(ws, "gh -R acme/a pr create --title t"), "--repo from the root");
+    assert.ok(allowed(child("a"), "gh pr create --title t"), "from the member itself");
+    assert.ok(allowed(ws, 'cd a && gh pr create --title "Fix (x) & y" 2>&1'), "quotes and redirections don't count");
+    assert.ok(!allowed(ws, "cd b && gh pr create --title t"), "b is not pushed");
+    assert.ok(!allowed(ws, "cd c && gh pr create --title t"), "c is not a member");
+    assert.ok(!allowed(ws, "gh pr create --title t"), "the workspace repository is not a member");
+    fs.appendFileSync(path.join(child("b"), "app.txt"), "after verification\n");
+    commit(child("b"), "late");
+    assert.ok(!allowed(ws, "cd a && gh pr create --title t"), "b changed after verification");
+    git(child("b"), "reset", "-q", "--hard", "HEAD~1");
+    assert.ok(allowed(ws, "cd a && gh pr create --title t"), "b is back to the verified patch");
+  });
+
+  test("a directory change the gate can't follow is refused", () => {
+    for (const command of [
+      "(cd a) ; gh pr create --title t",
+      "cd a & gh pr create --title t",
+      "cd $REPO && gh pr create --title t",
+      "cd a || gh pr create --title t",
+      "cd a && echo $(date) && gh pr create --title t",
+      'bash -c "gh pr create --title t"; cd a',
+      "cd a; popd; gh pr create --title t",
+      "GH_REPO=acme/a gh pr create --title t",
+    ]) {
+      assert.ok(!allowed(ws, command), command);
+    }
+  });
+
+  test("nobody pushes a member's default branch from the workspace root", () => {
+    for (const command of ["git -C c push", "cd c && git push", "git -C c push origin main", "git -C $X push",
+      "(cd c) && git push", "cd c && git push origin HEAD"]) {
+      assert.ok(!allowed(ws, command), command);
+    }
+    for (const command of ["git -C a push", "cd a && git push -u origin feature/7-across", "git push"]) {
+      assert.ok(allowed(ws, command), command);
+    }
+  });
+
+  test("a later member change needs a fresh verdict, recorded from the workspace root", () => {
+    fs.appendFileSync(path.join(child("a"), "app.txt"), "round two\n");
+    assert.notEqual(gate(ws, ["check"]).code, 0);
+    hook(ws, "verifier-start", { agent_id: "v2" });
+    git(child("a"), "switch", "-q", "-c", "other");
+    hook(ws, "authorize-record", { agent_id: "v2", ...bash(ws, `node .agents/scripts/gate.mjs ${record().join(" ")}`) });
+    assert.notEqual(gate(ws, record()).code, 0, "a member switched branches during verification");
+    git(child("a"), "switch", "-q", "feature/7-across");
+    hook(ws, "authorize-record", { agent_id: "v2", ...bash(ws, `node .agents/scripts/gate.mjs ${record().join(" ")}`) });
+    const recorded = gate(ws, record());
+    assert.equal(recorded.code, 0, recorded.err);
+    assert.equal(gate(ws, ["check"]).code, 0);
+  });
+});

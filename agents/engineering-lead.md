@@ -88,7 +88,11 @@ that skill does on a successful start; stop after the start record; when
 `align-issue` or a decomposition decision needs the user, stop and return the
 questions instead of asking. After the start, record the base commit from the
 start record: `node .agents/scripts/gate.mjs set-base <base-commit>`, run on
-the issue branch. Material product decisions go to the user through you, with
+the issue branch. In a workspace of several repositories, run from the
+workspace root `node .agents/scripts/gate.mjs workspace set <path>...` with
+every affected repository's path, `.` for the workspace repository itself,
+and `node .agents/scripts/gate.mjs set-base <base-commit> --repo <path>` for
+each; run every gate command from the workspace root from then on. Material product decisions go to the user through you, with
 `AskUserQuestion` when the options are clear. Repository facts and routine
 implementation choices do not.
 
@@ -158,8 +162,11 @@ the packet's actions all fall inside that list and
 `node .agents/scripts/gate.mjs check` passes, write the packet to
 `<runDir>/pr-packet.md` as the record of what was approved under the standing
 authorization, then carry out Stage 2 in this order: commit,
-`node .agents/scripts/gate.mjs check --committed`, push, create the PR. Any
-action outside the list goes to the user first. Put the verdict, its proof levels and the evidence summary in the
+`node .agents/scripts/gate.mjs check --committed`, push, create the PR. In a
+workspace, commit in every repository of the change before that check, which
+runs from the workspace root and covers them all, then push each branch and
+create each PR from inside its repository, as `cd <repository> && gh pr create`.
+Any action outside the list goes to the user first. Put the verdict, its proof levels and the evidence summary in the
 PR's `Verification` section, and the checks only a person can run under
 `How to test practically`.
 

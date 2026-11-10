@@ -124,6 +124,13 @@ in this order, and stop at the first check that fails:
 5. Create the pull request in the approved state and move the closing issue
    to the in-review status, as `prepare-pr`'s second stage describes.
 
+In a workspace of several repositories, run the checks from the workspace
+root, where they cover every repository of the change. Commit in each
+repository that has a change before the committed check, push each branch,
+then create each pull request from inside its repository, such as
+`cd <repository> && gh pr create …`. The gate refuses a ready pull request in
+any of them while any repository of the change differs from what was verified.
+
 When a check fails, or the gate's hook refuses `gh pr create` or
 `gh pr ready`, the code changed after verification, something verified is
 uncommitted, or the push is missing. Stop and report which check failed with
