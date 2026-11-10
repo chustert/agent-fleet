@@ -42,7 +42,7 @@ Without this file, the lead asks the user at every gate. `setup-project` writes 
 
 ## Cross-model review
 
-The reviewer asks a model from another family for a second opinion through `.agents/scripts/second-opinion.mjs`, which reads the `Command` row. When `docs/agents/models.md` already puts the reviewer on another family than the developer, the second opinion adds less. The command must run read-only. The script sets `PROMPT`, the review request, which names the patch file, and `OUT`, the file the reply must end up in, and runs the command from the repository root in a POSIX shell.
+The reviewer asks a model from another family for a second opinion through `.agents/scripts/second-opinion.mjs`, which reads the `Command` row. When `docs/agents/models.md` already puts the reviewer on another family than the developer, the second opinion adds less. The command must run read-only. The script sets `PROMPT`, the review request, which names the patch file, and `OUT`, the file the reply must end up in, and runs the command in a POSIX shell from the project root: the repository root, or the workspace root when a repository of a workspace uses the workspace's profile.
 
 | Setting | Value |
 | --- | --- |

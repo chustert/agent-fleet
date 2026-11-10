@@ -26,7 +26,9 @@ evidence directory: it holds the verifier's conclusions.
    node .agents/scripts/second-opinion.mjs <base-commit> <worktree-path> <issue-url> <output-file>
    ```
 
-   with the output file in the evidence directory. It asks the model named
+   with the output file in the evidence directory. In a workspace, run it
+   once per repository of the change, with that repository's base and
+   directory and its own output file. It asks the model named
    under `Cross-model review` in `docs/agents/autonomy.md` to review the same
    diff read-only and grade findings P0 to P3. Run it once, before you
    finalize your own findings, and do not show it your findings. If it prints

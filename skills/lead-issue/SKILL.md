@@ -95,6 +95,18 @@ When the developer returns, the checkout is on the issue branch. Run
 base commit from the start record with
 `node .agents/scripts/gate.mjs set-base <base-commit>`.
 
+In a workspace of several repositories, the start record names a branch and a
+base for every affected repository. From the workspace root, name those
+repositories with `node .agents/scripts/gate.mjs workspace set <path>...`,
+using each one's path from the workspace root, and `.` when the workspace
+repository changes too. Do this at the start of every issue in the workspace,
+even one that changes a single repository, because it replaces the
+repositories an earlier issue named. Then record each base with
+`node .agents/scripts/gate.mjs set-base <base-commit> --repo <path>`. From then
+on, the gate treats them as one change: a verdict covers all of them, and the
+gate refuses a ready pull request in any of them while any part differs from
+what was verified. Run every gate command from the workspace root.
+
 Put material product decisions that `align-issue` or a decomposition raises to
 the user, with the options and their consequences, then send the developer the
 answer marked as the user's. Repository facts and routine implementation
@@ -119,7 +131,9 @@ verifier, as the `verifier` type when the gate is active, with its brief and:
 
 - the issue link and any approved specification link;
 - every affected repository, the branch, the base commit, and the evidence
-  directory;
+  directory. In a workspace, also give each repository's path from the
+  workspace root, and the `Boundaries` rows from `docs/agents/domain.md` that
+  the change crosses, with their `Local check`;
 - the harness skill named in `docs/agents/verification.md`;
 - the developer's claimed checks and manual test steps, labelled as
   unverified claims from the author to audit, never as evidence;
@@ -185,7 +199,10 @@ its brief, the run directory and those items. It drafts only.
 ### 6. Ship, through the developer
 
 The developer prepares and opens the pull request. You check its packet,
-answer its approval gate, and confirm the result.
+answer its approval gate, and confirm the result. In a workspace, the developer
+prepares one packet per repository with a change, as `prepare-pr` describes:
+each pull request links the umbrella issue and the others, and states the merge
+order from the change note. Approve the packets together.
 
 1. **Packet.** Continue the developer: run `prepare-pr` up to its approval
    gate and write the packet to `<run directory>/pr-packet.md`. Give it the
@@ -207,9 +224,10 @@ answer its approval gate, and confirm the result.
 4. **Hand back the approval.** Continue the developer with the approved
    actions, each by name. Its brief gives the patch checks it runs before it
    commits and before it pushes, and it stops at the first one that fails.
-5. **Confirm.** When the developer returns the pull request, check it from
-   read-only evidence: `gh pr view` shows the approved base and state, and in
-   the checkout, `node .agents/scripts/gate.mjs check --committed` passes with
+5. **Confirm.** When the developer returns the pull request, or one per
+   repository in a workspace, check each from read-only evidence:
+   `gh pr view` shows the approved base and state, and in the checkout, or the
+   workspace root, `node .agents/scripts/gate.mjs check --committed` passes with
    the gate active, or `node .agents/scripts/gate.mjs fingerprint --committed`
    reports the verdict's `Patch` without it. When it doesn't, the code changed
    after verification or something verified was left out. Have the developer
@@ -223,13 +241,22 @@ let anyone work around a check.
 
 Send one message, as short as the facts allow:
 
-- the pull request link and the closing issue's board status;
+- the pull request link and the closing issue's board status, or in a
+  workspace every pull request with its repository and the merge order from
+  the change note;
 - the verdict, the proof level reached for each behaviour, and where the
   evidence is;
 - how many rounds it took and what the reviewers caught;
 - the checks only a person can do, with exact steps;
 - the drafted follow-up issues, one line each, and the question of which to
   file. On the user's answer, continue the spec writer to file exactly those.
+
+When the developer created repository worktrees inside a workspace worktree,
+they stay until the user says the pull requests merged. Then list them, and
+have the developer remove them only after the user agrees. Once the pull
+requests merged, clear the gate's list of repositories with
+`node .agents/scripts/gate.mjs workspace clear` from the workspace root, so no
+later verification carries them.
 
 ## Harness work
 

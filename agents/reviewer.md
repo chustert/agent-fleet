@@ -44,7 +44,9 @@ leaves out why the code was written as it was and what the verifier concluded.
    node .agents/scripts/second-opinion.mjs <base-commit> <worktree-path> <issue-url> <output-file>
    ```
 
-   with the output file next to the verifier's evidence. It asks the model
+   with the output file next to the verifier's evidence, once per repository
+   of the change in a workspace, each with its own base, directory and output
+   file. It asks the model
    named under `Cross-model review` in `docs/agents/autonomy.md` to review the
    same diff read-only and grade findings P0 to P3. Run it once, before you
    finalize your own findings, and do not show it your findings. If it prints

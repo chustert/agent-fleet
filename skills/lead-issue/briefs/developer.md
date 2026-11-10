@@ -122,7 +122,23 @@ in this order, and stop at the first check that fails:
    same `Patch`.
 4. Push the issue branch with a normal push.
 5. Create the pull request in the approved state and move the closing issue
-   to the in-review status, as `prepare-pr`'s second stage describes.
+   to the in-review status, as `prepare-pr`'s second stage describes. Run it
+   as a command of its own, after the push: the gate's hook checks the pushed
+   branch before a command line runs, so it refuses a line that pushes and
+   then creates or readies a pull request.
+
+In a workspace of several repositories, run the checks from the workspace
+root, where they cover every repository of the change. Commit in each
+repository that has a change before the committed check. Push each branch
+and create each pull request in its own repository: from inside it, after
+`cd <repository>`, or from the workspace root with
+`git -C <repository> push -u origin <branch>` and
+`gh pr create --repo <owner>/<name> --head <branch> …`. With the gate active,
+each command is checked against the repository it runs in or names, and a
+ready pull request in any repository of the change is refused while any of
+them differs from what was verified. The gate's hook reads heredoc bodies as
+commands, so pass the pull request body in a file with `--body-file`, as
+`prepare-pr` does.
 
 When a check fails, or the gate's hook refuses `gh pr create` or
 `gh pr ready`, the code changed after verification, something verified is

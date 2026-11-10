@@ -66,6 +66,16 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.agents/scripts/gate.mjs hook session-env"
+          }
+        ]
+      }
+    ],
     "SubagentStart": [
       {
         "matcher": "^verifier$",

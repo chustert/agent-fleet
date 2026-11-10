@@ -16,7 +16,10 @@ to every claim you make.
    verify the wrong diff. Record the patch's fingerprint before you change
    anything, with `node .agents/scripts/gate.mjs fingerprint`. Read the issue
    and every comment yourself. The brief's list of the author's claims is
-   something to audit, not evidence.
+   something to audit, not evidence. In a workspace of several repositories,
+   run every gate command from the workspace root: `paths` then lists each
+   member with its branch and base, check every one against your brief, and
+   the fingerprint covers them all.
 
 2. **Verify the work.** Follow `verify-work`
    (`.agents/skills/verify-work/SKILL.md`) in full, with these additions:
@@ -36,6 +39,11 @@ to every claim you make.
    - **Evidence location.** Put every artifact under the evidence directory in
      your brief, which sits inside the Git directory and outside the working
      tree, and confirm it survived the harness's cleanup.
+   - **Every repository and the boundary.** In a workspace, verify each
+     member with its own commands from `docs/agents/verification.md`, then
+     run the `Local check` of every boundary in your brief with both sides
+     running together. A boundary whose `Local check` is `None` is a
+     criterion you mark `Not verified`, with the missing environment named.
    - **The independent review.** At `verify-work`'s independent review step,
      start one reviewer with the brief in
      `.agents/skills/lead-issue/briefs/reviewer.md`. Choose its model and

@@ -88,7 +88,12 @@ that skill does on a successful start; stop after the start record; when
 `align-issue` or a decomposition decision needs the user, stop and return the
 questions instead of asking. After the start, record the base commit from the
 start record: `node .agents/scripts/gate.mjs set-base <base-commit>`, run on
-the issue branch. Material product decisions go to the user through you, with
+the issue branch. In a workspace of several repositories, run from the
+workspace root `node .agents/scripts/gate.mjs workspace set <path>...` at the
+start of every issue, since it replaces the repositories an earlier issue
+named, with every affected repository's path, `.` for the workspace repository itself,
+and `node .agents/scripts/gate.mjs set-base <base-commit> --repo <path>` for
+each; run every gate command from the workspace root from then on. Material product decisions go to the user through you, with
 `AskUserQuestion` when the options are clear. Repository facts and routine
 implementation choices do not.
 
@@ -108,7 +113,10 @@ Spawn a new `verifier` named `verify-<issue>-r<round>` with:
 
 - the issue URL and any approved specification link;
 - every affected repository, the branch, the base commit from `gate.mjs paths`,
-  and the evidence directory `<runDir>/round-<round>/`;
+  and the evidence directory `<runDir>/round-<round>/`. In a workspace, also
+  each repository's path from the workspace root, and the `Boundaries` rows
+  from `docs/agents/domain.md` that the change crosses, with their
+  `Local check`;
 - the harness skill name from `docs/agents/verification.md`;
 - the developer's claimed checks and manual test steps, labelled as
   **unverified claims from the author to audit**, never as evidence;
@@ -158,8 +166,13 @@ the packet's actions all fall inside that list and
 `node .agents/scripts/gate.mjs check` passes, write the packet to
 `<runDir>/pr-packet.md` as the record of what was approved under the standing
 authorization, then carry out Stage 2 in this order: commit,
-`node .agents/scripts/gate.mjs check --committed`, push, create the PR. Any
-action outside the list goes to the user first. Put the verdict, its proof levels and the evidence summary in the
+`node .agents/scripts/gate.mjs check --committed`, push, create the PR, with the push and the PR as separate commands. In a
+workspace, commit in every repository of the change before that check, which
+runs from the workspace root and covers them all, then push each branch and
+create each PR in its own repository: from the workspace root with
+`git -C <repository> push -u origin <branch>` and
+`gh pr create --repo <owner>/<name> --head <branch>`, or after `cd <repository>`.
+Any action outside the list goes to the user first. Put the verdict, its proof levels and the evidence summary in the
 PR's `Verification` section, and the checks only a person can run under
 `How to test practically`.
 
@@ -168,13 +181,16 @@ PASS or PASS+NOTES for the exact committed patch and that commit is pushed. If
 it refuses, the code changed after verification, something verified was left
 uncommitted, or the push is missing. Find
 out which and re-verify; never work around the hook. Never merge: the user
-merges.
+merges. In a workspace, confirm each PR the same way: `gh pr view` shows its
+base and state, and `node .agents/scripts/gate.mjs check --committed` from the
+workspace root passes.
 
 ### 7. Report to the user
 
 One message, as short as the facts allow:
 
-- the PR link and its closing issue's board status;
+- the PR link and its closing issue's board status, or in a workspace every
+  PR with its repository and the merge order from the change note;
 - the verdict, the proof level reached for each behaviour, and where the
   evidence is;
 - how many rounds it took and what the reviewers caught;
@@ -183,6 +199,11 @@ One message, as short as the facts allow:
 - the drafted follow-up issues, each with one line, and the question: which
   should be filed? On the user's answer, resume `spec-writer` to file exactly
   those.
+
+Repository worktrees that `start-issue` created inside a workspace worktree
+stay until the user says the PRs merged. Then list them, and have the
+developer remove them only after the user agrees. Once the PRs merged, run
+`node .agents/scripts/gate.mjs workspace clear` from the workspace root.
 
 ## Rules
 
