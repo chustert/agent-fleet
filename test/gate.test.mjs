@@ -214,6 +214,38 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     }
   });
 
+  test("the third review's forms are refused, and plain mentions of git push are not", () => {
+    for (const command of [
+      "bash <<'EOF'\ngit push origin 'main'\nEOF",
+      "cat <<'EOF' | sh\ngit push origin \"main\"\nEOF",
+      "cat <<$'EOF'\nx\nEOF\ngit push origin 'main'",
+      "gh pr new --title t",
+      "gh pr --repo=o/r ready 3",
+      "git push origin 'refs/heads/*'",
+      "git push --branches",
+      "git -c remote.origin.push=HEAD:main push",
+      "git push origin \"${B:-main}\"",
+      "git push origin $'main'",
+      "$'cd' sub; git push",
+      "CD=cd; $CD sub; git push",
+      "chdir sub; git push",
+      "find . -maxdepth 0 -exec sh -c 'git push origin main' {} +",
+      "bash -c -- 'git push origin main'",
+      "trap 'git push origin main' EXIT",
+      "eval 'git push origin main'",
+      "gh api graphql -F query=@m.graphql",
+    ]) {
+      assert.ok(denied(hook(repo, "bash-guard", bash(repo, command))), command.replace(/\n/g, "\\n"));
+    }
+    for (const command of [
+      "git commit -m \"$(cat <<'EOF'\nMake git push safer\nEOF\n)\"",
+      "git status # then git push",
+      "cat > /tmp/notes.md <<'EOF'\nrun git push origin main later\nEOF",
+    ]) {
+      assert.equal(hook(repo, "bash-guard", bash(repo, command)).out, "", command.replace(/\n/g, "\\n"));
+    }
+  });
+
   test("nobody but gate.mjs writes the verdict state", () => {
     const runDir = JSON.parse(gate(repo, ["paths"]).out).runDir;
     const runs = path.dirname(runDir);
@@ -402,9 +434,13 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
     assert.ok(allowed(ws, "cd a && echo $(date) && gh pr create --title t"), "a substitution that changes no directory");
     assert.ok(allowed(ws, "cd a && gh pr create --title t --body \"$(cat <<'EOF'\nA \"quoted\" body (with a paren; and a semicolon), that doesn't end early\nEOF\n)\""),
       "a heredoc body with quotes, parentheses and an apostrophe");
-    // The gate reads heredoc bodies as commands, so it fails closed; a body that reads like one goes in a file instead.
-    assert.ok(!allowed(ws, "cd a && gh pr create --title t --body \"$(cat <<'EOF'\nFirst run:\ncd elsewhere\nEOF\n)\""),
-      "a body line that reads as a directory change");
+    // A body of data, with a plain delimiter and nothing on the line that runs text as a script, may say anything.
+    assert.ok(allowed(ws, "cd a && gh pr create --title t --body \"$(cat <<'EOF'\nFirst run:\ncd elsewhere\ngit push origin main\nEOF\n)\""),
+      "a body of data that reads like commands");
+    assert.ok(!allowed(ws, "cd a && bash <<'EOF'\ncd ../c\ngh pr create --title t\nEOF"), "the same fed to a shell is a script");
+    assert.ok(allowed(ws, "cd a && gh pr create --title t --body 'Part of https://github.com/acme/b/pull/2'"), "a companion link in the body");
+    assert.ok(!allowed(ws, "cd a && gh pr edit --base main https://github.com/acme/c/pull/1"), "a selector URL after the flags");
+    assert.ok(!allowed(ws, "git -C c push origin @"), "@ is HEAD, and c is on main");
     assert.ok(allowed(ws, "cd a && gh pr create --title t --body-file /tmp/body.md"), "the body in a file");
     assert.ok(allowed(child("a"), "gh pr create --title t"), "from the member itself");
     assert.ok(allowed(ws, 'cd a && gh pr create --title "Fix (x) & y" 2>&1'), "quotes and redirections don't count");
@@ -534,6 +570,30 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
       assert.equal(hook(child("a"), "verifier-stop", { agent_id: "v4" }).code, 0);
     } finally {
       fs.renameSync(path.join(dir, "b-away"), child("b"));
+    }
+  });
+
+  test("verifiers can't write to another member, and --repo takes its value either way", () => {
+    for (const command of ["git -C ../b reset --hard HEAD~1", "git -C ../b commit -am x"]) {
+      assert.ok(denied(hook(child("a"), "observe-only", bash(child("a"), command))), command);
+    }
+    const b = JSON.parse(gate(ws, ["fingerprint", "--repo", "b"]).out).fingerprint;
+    assert.equal(JSON.parse(gate(ws, ["fingerprint", "--repo=b"]).out).fingerprint, b);
+    assert.equal(JSON.parse(gate(ws, ["set-base", git(child("b"), "rev-parse", "main"), "--repo=b"]).out).path, "b");
+    assert.notEqual(gate(ws, ["fingerprint", "--repo"]).code, 0, "a bare --repo is an error");
+  });
+
+  test("a member nested in another member is still a member", () => {
+    const sub = path.join(child("a"), "sub");
+    init(sub, path.join(dir, "acme", "sub.git"));
+    fs.writeFileSync(path.join(sub, "s.txt"), "s\n");
+    commit(sub, "init");
+    try {
+      assert.equal(gate(ws, ["workspace", "set", "a", "b", "a/sub"]).code, 0);
+      assert.equal(fs.realpathSync(JSON.parse(gate(sub, ["paths"]).out).root), fs.realpathSync(ws));
+    } finally {
+      assert.equal(gate(ws, ["workspace", "set", "a", "b"]).code, 0);
+      fs.rmSync(sub, { recursive: true, force: true });
     }
   });
 

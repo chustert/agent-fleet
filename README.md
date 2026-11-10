@@ -303,6 +303,7 @@ The skills stop at approval gates. `docs/agents/autonomy.md`, which `setup-proje
 - The skills report physical-device, target-hardware, and play-test checks as steps for a person to run. They never claim those checks passed on the strength of a build or an editor run.
 - The agent team runs only in Claude Code. On Windows, Claude Code must run hooks in Git Bash, which comes with Git for Windows; in PowerShell the gate's hooks fail without blocking anything.
 - Every fix round starts a fresh verifier and reviewer, which costs more than one agent checking its own work; that is the price of independent proof. The gate's fingerprint needs a Git version with `git patch-id --verbatim`.
+- The gate's hook finds pushes and pull request commands by reading the shell command an agent runs. It refuses what it can't read with confidence, such as a directory change it can't follow, a heredoc it can't tell from a script, or an unterminated quote, but no reading of shell text is complete, so it is a guardrail against mistakes and shortcuts, not enforcement. Protect the default branch on GitHub, so that a push the hook misses still can't land there. A PR body that the hook reads as commands goes in a file with `--body-file`, which `prepare-pr` already does.
 
 ## License
 
