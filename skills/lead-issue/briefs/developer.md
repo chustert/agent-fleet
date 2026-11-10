@@ -130,7 +130,9 @@ repository that has a change before the committed check, push each branch,
 then create each pull request from inside its repository, such as
 `cd <repository> && gh pr create …`. The gate follows that one form of
 directory change, a single leading `cd <path> &&`, and refuses a command line
-that changes directory or repository any other way. It also refuses a ready
+that changes directory or repository any other way. It reads heredoc bodies
+as commands, so pass the pull request body in a file with `--body-file`, as
+`prepare-pr` does. It also refuses a ready
 pull request in any repository of the change while any of them differs from
 what was verified.
 

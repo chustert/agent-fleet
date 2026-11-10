@@ -253,7 +253,10 @@ Send one message, as short as the facts allow:
 
 When the developer created repository worktrees inside a workspace worktree,
 they stay until the user says the pull requests merged. Then list them, and
-have the developer remove them only after the user agrees.
+have the developer remove them only after the user agrees. Once the pull
+requests merged, clear the gate's list of repositories with
+`node .agents/scripts/gate.mjs workspace clear` from the workspace root, so no
+later verification carries them.
 
 ## Harness work
 

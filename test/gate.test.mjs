@@ -187,6 +187,33 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     }
   });
 
+  test("the reader skips no text, so nothing hides a push or a pull request", () => {
+    // Each hides `git push origin main`, or a command the gate can't place, where the second review found the first
+    // reader skipped text: unquoted heredoc bodies, comments, heredocs a shell runs, odd delimiters, arithmetic.
+    for (const command of [
+      "cat <<EOF\n$(git push origin main)\nEOF",
+      "cat <<EOF\n`git push origin main`\nEOF",
+      "# note: see <<EOF\ngit push origin main",
+      "git status # see <<EOF\ngit push origin main",
+      "# don't forget\ngit push origin main",
+      "cat <<'EOF' | sh\ngit push origin main\nEOF",
+      "<<EOF bash\ngit push origin main\nEOF",
+      "bash -c \"$(cat <<'EOF'\ngit push origin main\nEOF\n)\"",
+      "bash <<< \"git push origin main\"",
+      "cat <<E\"O\"F\nhello\nEOF\ngit push origin main",
+      "cat <<END:X\nhello\nEND:X\ngit push origin main",
+      "((m = 1<<2))\ngit push origin main",
+      "echo ${#x} ; git push origin main",
+      "find . -name a.txt -execdir git push origin feature/1-test {} +",
+      "echo 'unclosed ; gh pr create --title t",
+    ]) {
+      assert.ok(denied(hook(repo, "bash-guard", bash(repo, command))), command.replace(/\n/g, "\\n"));
+    }
+    for (const command of ["git status # it's fine", "echo ${#x}", "git push -u origin feature/1-test # once"]) {
+      assert.equal(hook(repo, "bash-guard", bash(repo, command)).out, "", command);
+    }
+  });
+
   test("nobody but gate.mjs writes the verdict state", () => {
     const runDir = JSON.parse(gate(repo, ["paths"]).out).runDir;
     const runs = path.dirname(runDir);
@@ -368,10 +395,17 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
     assert.ok(!allowed(ws, "gh -R acme/a pr create --head other --title t"), "--head must be the branch the gate checks");
     assert.ok(!allowed(child("a"), "gh pr create --repo acme/b --title t"), "--repo after the subcommand counts");
     assert.ok(!allowed(ws, "gh -R acme/a pr ready 3"), "ready for another repository runs from its directory");
+    assert.ok(!allowed(ws, "cd a && gh pr ready https://github.com/acme/c/pull/1"), "a URL of another repository");
+    assert.ok(!allowed(child("a"), "gh pr edit https://github.com/acme/c/pull/1 --base main"), "retarget by URL elsewhere");
+    assert.ok(allowed(ws, "cd a && gh pr ready https://github.com/acme/a/pull/1"), "a URL of this repository");
     assert.ok(allowed(ws, "cd a && git push -u origin feature/7-across 2>&1 | tail -3"), "a pipe after the leading cd");
     assert.ok(allowed(ws, "cd a && echo $(date) && gh pr create --title t"), "a substitution that changes no directory");
-    assert.ok(allowed(ws, "cd a && gh pr create --title t --body \"$(cat <<'EOF'\nA \"quoted\" body (with a paren; and a semicolon)\ncd elsewhere\nEOF\n)\""),
-      "a heredoc body is data, whatever it says");
+    assert.ok(allowed(ws, "cd a && gh pr create --title t --body \"$(cat <<'EOF'\nA \"quoted\" body (with a paren; and a semicolon), that doesn't end early\nEOF\n)\""),
+      "a heredoc body with quotes, parentheses and an apostrophe");
+    // The gate reads heredoc bodies as commands, so it fails closed; a body that reads like one goes in a file instead.
+    assert.ok(!allowed(ws, "cd a && gh pr create --title t --body \"$(cat <<'EOF'\nFirst run:\ncd elsewhere\nEOF\n)\""),
+      "a body line that reads as a directory change");
+    assert.ok(allowed(ws, "cd a && gh pr create --title t --body-file /tmp/body.md"), "the body in a file");
     assert.ok(allowed(child("a"), "gh pr create --title t"), "from the member itself");
     assert.ok(allowed(ws, 'cd a && gh pr create --title "Fix (x) & y" 2>&1'), "quotes and redirections don't count");
     assert.ok(!allowed(ws, "cd b && gh pr create --title t"), "b is not pushed");
@@ -441,7 +475,12 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
 
   test("workspace commands use the workspace root, even from inside a member", () => {
     assert.deepEqual(JSON.parse(gate(child("a"), ["workspace", "show"]).out).members.map((m) => m.path), ["a", "b"]);
-    assert.notEqual(gate(child("c"), ["workspace", "set", "."]).code, 0, "a repository inside the workspace can't be one of its own");
+    // A member that also has a workspace file of its own still answers to the workspace's verdict.
+    const own = path.join(git(child("a"), "rev-parse", "--absolute-git-dir"), "agent-runs", "feature__7-across");
+    fs.mkdirSync(own, { recursive: true });
+    fs.writeFileSync(path.join(own, "workspace.json"), JSON.stringify({ members: ["."] }));
+    assert.equal(fs.realpathSync(JSON.parse(gate(child("a"), ["paths"]).out).root), fs.realpathSync(ws));
+    fs.rmSync(path.join(own, "workspace.json"));
     const base = git(child("b"), "rev-parse", "main");
     assert.equal(JSON.parse(gate(child("a"), ["set-base", base, "--repo", "b"]).out).path, "b");
   });
@@ -488,8 +527,29 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
       assert.notEqual(recorded.code, 0);
       assert.match(recorded.err, /could not take the patch when verification started: b is not the root of a Git repository/);
       assert.equal(hook(ws, "verifier-stop", { agent_id: "v3" }).code, 0, "no nagging for a verdict it can't record");
+      // The same from a member's directory: the error lock lands where record and verifier-stop look.
+      hook(child("a"), "verifier-start", { agent_id: "v4" });
+      hook(child("a"), "authorize-record", { agent_id: "v4", ...bash(child("a"), `node .agents/scripts/gate.mjs ${record().join(" ")}`) });
+      assert.match(gate(child("a"), record()).err, /could not take the patch when verification started/);
+      assert.equal(hook(child("a"), "verifier-stop", { agent_id: "v4" }).code, 0);
     } finally {
       fs.renameSync(path.join(dir, "b-away"), child("b"));
+    }
+  });
+
+  test("a worktree inside the workspace's main checkout is a workspace of its own", () => {
+    const wt = path.join(ws, ".wt", "w9");
+    git(ws, "worktree", "add", "-q", "-b", "t3/w9", wt, "main");
+    git(child("a"), "worktree", "add", "-q", "-b", "feature/9-nested", path.join(wt, "a"), git(child("a"), "rev-parse", "main"));
+    try {
+      const set = gate(wt, ["workspace", "set", "a"]);
+      assert.equal(set.code, 0, set.err);
+      assert.deepEqual(JSON.parse(set.out).members.map((m) => [m.path, m.branch]), [["a", "feature/9-nested"]]);
+      assert.equal(fs.realpathSync(JSON.parse(gate(path.join(wt, "a"), ["paths"]).out).root), fs.realpathSync(wt));
+      assert.deepEqual(JSON.parse(gate(ws, ["workspace", "show"]).out).members.map((m) => m.path), ["a", "b"], "the main checkout's list stays");
+    } finally {
+      git(child("a"), "worktree", "remove", "--force", path.join(wt, "a"));
+      git(ws, "worktree", "remove", "--force", wt);
     }
   });
 });

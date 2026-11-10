@@ -200,7 +200,8 @@ One message, as short as the facts allow:
 
 Repository worktrees that `start-issue` created inside a workspace worktree
 stay until the user says the PRs merged. Then list them, and have the
-developer remove them only after the user agrees.
+developer remove them only after the user agrees. Once the PRs merged, run
+`node .agents/scripts/gate.mjs workspace clear` from the workspace root.
 
 ## Rules
 
