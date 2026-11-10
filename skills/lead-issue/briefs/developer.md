@@ -128,8 +128,11 @@ In a workspace of several repositories, run the checks from the workspace
 root, where they cover every repository of the change. Commit in each
 repository that has a change before the committed check, push each branch,
 then create each pull request from inside its repository, such as
-`cd <repository> && gh pr create …`. The gate refuses a ready pull request in
-any of them while any repository of the change differs from what was verified.
+`cd <repository> && gh pr create …`. The gate follows that one form of
+directory change, a single leading `cd <path> &&`, and refuses a command line
+that changes directory or repository any other way. It also refuses a ready
+pull request in any repository of the change while any of them differs from
+what was verified.
 
 When a check fails, or the gate's hook refuses `gh pr create` or
 `gh pr ready`, the code changed after verification, something verified is

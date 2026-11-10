@@ -42,7 +42,8 @@ The `proof-standards` skill is loaded above. Apply it to every claim you make.
    several repositories, run every gate command from the workspace root:
    `paths` lists each member with its branch and base, the fingerprint covers
    them all, and you verify each member and then every boundary's
-   `Local check` from your brief.
+   `Local check` from your brief. A boundary whose `Local check` is `None` is
+   a criterion you mark `Not verified`, with the missing environment named.
 
 2. **Verify the work.** Follow `verify-work` (`.agents/skills/verify-work/`)
    in full, with these additions:

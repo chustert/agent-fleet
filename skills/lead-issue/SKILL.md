@@ -99,7 +99,9 @@ In a workspace of several repositories, the start record names a branch and a
 base for every affected repository. From the workspace root, name those
 repositories with `node .agents/scripts/gate.mjs workspace set <path>...`,
 using each one's path from the workspace root, and `.` when the workspace
-repository changes too. Then record each base with
+repository changes too. Do this at the start of every issue in the workspace,
+even one that changes a single repository, because it replaces the
+repositories an earlier issue named. Then record each base with
 `node .agents/scripts/gate.mjs set-base <base-commit> --repo <path>`. From then
 on, the gate treats them as one change: a verdict covers all of them, and the
 gate refuses a ready pull request in any of them while any part differs from

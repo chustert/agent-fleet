@@ -130,6 +130,14 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     assert.ok(denied(hook(repo, "bash-guard", create)), "not pushed");
     git(repo, "push", "-q", "-u", "origin", "feature/1-test");
     assert.equal(hook(repo, "bash-guard", create).out, "");
+    // The forms agents use to ship stay open in a single repository.
+    for (const command of [
+      `cd ${repo} && gh pr create --title t --body "$(cat <<'EOF'\nSee "the plan" (step 2); done.\nEOF\n)"`,
+      `cd ${repo} && git push -u origin feature/1-test 2>&1 | tail -3`,
+      "gh pr create --title t --body-file - <<'EOF'\nbody\nEOF",
+    ]) {
+      assert.equal(hook(repo, "bash-guard", bash(repo, command)).out, "", command);
+    }
   });
 
   test("a clean rebase keeps the verdict; a new commit loses it", () => {
@@ -354,7 +362,16 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
 
   test("a member's ready pull request needs its own pushed patch and every other member's verified patch", () => {
     assert.ok(allowed(ws, "cd a && gh pr create --title t"), "cd from the root");
-    assert.ok(allowed(ws, "gh -R acme/a pr create --title t"), "--repo from the root");
+    assert.ok(allowed(ws, "gh -R acme/a pr create --head feature/7-across --title t"), "--repo and --head from the root");
+    assert.ok(allowed(ws, "gh pr create --repo acme/a --head feature/7-across --title t"), "--repo after the subcommand");
+    assert.ok(!allowed(ws, "gh -R acme/a pr create --title t"), "--repo for another repository needs --head");
+    assert.ok(!allowed(ws, "gh -R acme/a pr create --head other --title t"), "--head must be the branch the gate checks");
+    assert.ok(!allowed(child("a"), "gh pr create --repo acme/b --title t"), "--repo after the subcommand counts");
+    assert.ok(!allowed(ws, "gh -R acme/a pr ready 3"), "ready for another repository runs from its directory");
+    assert.ok(allowed(ws, "cd a && git push -u origin feature/7-across 2>&1 | tail -3"), "a pipe after the leading cd");
+    assert.ok(allowed(ws, "cd a && echo $(date) && gh pr create --title t"), "a substitution that changes no directory");
+    assert.ok(allowed(ws, "cd a && gh pr create --title t --body \"$(cat <<'EOF'\nA \"quoted\" body (with a paren; and a semicolon)\ncd elsewhere\nEOF\n)\""),
+      "a heredoc body is data, whatever it says");
     assert.ok(allowed(child("a"), "gh pr create --title t"), "from the member itself");
     assert.ok(allowed(ws, 'cd a && gh pr create --title "Fix (x) & y" 2>&1'), "quotes and redirections don't count");
     assert.ok(!allowed(ws, "cd b && gh pr create --title t"), "b is not pushed");
@@ -373,13 +390,60 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
       "cd a & gh pr create --title t",
       "cd $REPO && gh pr create --title t",
       "cd a || gh pr create --title t",
-      "cd a && echo $(date) && gh pr create --title t",
       'bash -c "gh pr create --title t"; cd a',
       "cd a; popd; gh pr create --title t",
       "GH_REPO=acme/a gh pr create --title t",
     ]) {
       assert.ok(!allowed(ws, command), command);
     }
+  });
+
+  test("the review's ways of changing directory unseen are closed", () => {
+    // Most of these got through the first version of workspace mode: each pushes c's main, or judges a pull request
+    // in a repository other than the one it acts on. `timeout` and `sudo -u` hid `gh` from every earlier gate.
+    for (const command of [
+      'cd c && git push -o "`cd ..`"',
+      'cd a && gh pr create --title "x`cd ..`"',
+      "if true; then cd c; fi; git push",
+      "if true; then cd a; fi; gh pr create --title t",
+      "builtin cd a && gh pr create --title t",
+      "command cd c; git push",
+      "eval 'cd a' && gh pr create --title t",
+      "env -C a gh pr create --title t",
+      "GIT_DIR=a/.git GIT_WORK_TREE=a gh pr create --title t",
+      "git --git-dir=c/.git --work-tree=c push",
+      "GIT_DIR=c/.git git push",
+      "export GIT_DIR=c/.git; git push",
+      "git -C c -C . push",
+      "source ./go.sh; gh pr create --title t",
+      'bash -c "cd a && gh pr create --title t"',
+      "bash <<'EOF'\ncd c\ngit push\nEOF",
+      "cd a && true; gh pr create --title t",
+      "cd a && gh pr create --title t # ; cd ..",
+      "timeout 10 gh pr create --title t",
+      "sudo -u me gh pr create --title t",
+    ]) {
+      assert.ok(!allowed(ws, command), command);
+    }
+  });
+
+  test("workspace state is protected from a member's directory too", () => {
+    const runDir = JSON.parse(gate(ws, ["paths"]).out).runDir;
+    const latest = path.join(runDir, "latest.json");
+    for (const cwd of [ws, child("a")]) {
+      assert.ok(denied(hook(cwd, "state-guard", { tool_input: { file_path: latest } })), `state-guard from ${cwd}`);
+      assert.ok(denied(hook(cwd, "write-scope", { tool_input: { file_path: latest } })), `write-scope from ${cwd}`);
+      assert.ok(!allowed(cwd, `cp fake.json ${latest}`), `bash-guard from ${cwd}`);
+    }
+    const evidence = path.join(runDir, "round-1", "verification.md");
+    assert.equal(hook(child("a"), "write-scope", { tool_input: { file_path: evidence } }).out, "", "evidence from a member");
+  });
+
+  test("workspace commands use the workspace root, even from inside a member", () => {
+    assert.deepEqual(JSON.parse(gate(child("a"), ["workspace", "show"]).out).members.map((m) => m.path), ["a", "b"]);
+    assert.notEqual(gate(child("c"), ["workspace", "set", "."]).code, 0, "a repository inside the workspace can't be one of its own");
+    const base = git(child("b"), "rev-parse", "main");
+    assert.equal(JSON.parse(gate(child("a"), ["set-base", base, "--repo", "b"]).out).path, "b");
   });
 
   test("nobody pushes a member's default branch from the workspace root", () => {
@@ -404,5 +468,28 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
     const recorded = gate(ws, record());
     assert.equal(recorded.code, 0, recorded.err);
     assert.equal(gate(ws, ["check"]).code, 0);
+  });
+
+  test("a member added after the verdict needs a fresh one", () => {
+    assert.equal(gate(ws, ["workspace", "set", "a", "b", "c"]).code, 0);
+    const check = gate(ws, ["check"]);
+    assert.notEqual(check.code, 0);
+    assert.match(check.out, /now names a, b, c, but the latest verdict covers a, b/);
+    assert.ok(!allowed(ws, "cd a && gh pr create --title t"));
+    assert.equal(gate(ws, ["workspace", "set", "a", "b"]).code, 0);
+  });
+
+  test("a member the verifier can't snapshot is reported at record time, not as a missing session", () => {
+    fs.renameSync(child("b"), path.join(dir, "b-away"));
+    try {
+      hook(ws, "verifier-start", { agent_id: "v3" });
+      hook(ws, "authorize-record", { agent_id: "v3", ...bash(ws, `node .agents/scripts/gate.mjs ${record().join(" ")}`) });
+      const recorded = gate(ws, record());
+      assert.notEqual(recorded.code, 0);
+      assert.match(recorded.err, /could not take the patch when verification started: b is not the root of a Git repository/);
+      assert.equal(hook(ws, "verifier-stop", { agent_id: "v3" }).code, 0, "no nagging for a verdict it can't record");
+    } finally {
+      fs.renameSync(path.join(dir, "b-away"), child("b"));
+    }
   });
 });

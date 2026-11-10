@@ -272,7 +272,8 @@ describe("second opinion", () => {
       fs.writeFileSync(fake, "import fs from 'node:fs';\nfs.writeFileSync(process.env.OUT, 'WORKSPACE REVIEW\\n');\n");
       fs.mkdirSync(path.join(ws, "docs/agents"), { recursive: true });
       fs.writeFileSync(path.join(ws, "docs/agents/autonomy.md"), `| Command | \`node ${fake}\` |\n`);
-      fs.writeFileSync(path.join(ws, "docs/agents/verification.md"), "## Protected files\n\n- `config/secrets.yml`\n");
+      // The workspace profile names the file by its path from the workspace root.
+      fs.writeFileSync(path.join(ws, "docs/agents/verification.md"), "## Protected files\n\n- `app/config/secrets.yml`\n- `app/Signing.local`\n");
       fs.writeFileSync(path.join(ws, ".gitignore"), "/app/\n");
       git(ws, "add", ".");
       git(ws, "commit", "-qm", "init");
@@ -283,6 +284,7 @@ describe("second opinion", () => {
       fs.appendFileSync(path.join(app, "a.txt"), "member change\n");
       fs.mkdirSync(path.join(app, "config"));
       fs.writeFileSync(path.join(app, "config/secrets.yml"), "pw: hunter2\n");
+      fs.writeFileSync(path.join(app, "Signing.local"), "key: swordfish\n");
       const out = path.join(dir, "evidence", "second-opinion.md");
       const result = spawnSync(process.execPath, [path.join(ROOT, "lib/second-opinion.mjs"), base, app, "https://example.com/7", out],
         { encoding: "utf8" });
@@ -291,7 +293,7 @@ describe("second opinion", () => {
       assert.equal(fs.readFileSync(out, "utf8"), "WORKSPACE REVIEW\n");
       const patch = fs.readFileSync(path.join(dir, "evidence", "second-opinion.patch"), "utf8");
       assert.match(patch, /\+member change/);
-      assert.doesNotMatch(patch, /hunter2/);
+      assert.doesNotMatch(patch, /hunter2|swordfish/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
