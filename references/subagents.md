@@ -64,9 +64,8 @@ so the same file gives the same choice on every run:
 4. **When nothing is available,** use your own model and effort if the row
    ends with `Same as the lead`. Otherwise stop and ask the user which model to
    use, and start nothing on a guess.
-5. **When the agent must run as a project agent type,** as `lead-issue`
-   requires of the verifier while the verification gate is active, consider
-   only the entries that type can run on, in the same order.
+5. **When the agent must run as a project agent type,** as a skill may
+   require, consider only the entries that type can run on, in the same order.
 6. **Record the choice.** Put the model and effort you started the agent on,
    and each earlier entry you skipped with the reason, in the record the skill
    keeps for that work. When you skipped the row's first entry, tell the user

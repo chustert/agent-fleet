@@ -92,8 +92,7 @@ checks as yours; the verifier runs again what matters.
 ## Preparing the pull request
 
 The lead asks for this only after a verdict of `PASS` or `PASS+NOTES`. Its
-brief gives the passing round's record, the record's `Patch` fingerprint, and
-whether the verification gate is active.
+brief gives the passing round's record and the record's `Patch` fingerprint.
 
 ### Step 1: the packet
 
@@ -101,9 +100,8 @@ Run `prepare-pr`'s first stage on the issue branch. Fill the `Verification`
 section from the verifier's record: the verdict, the proof level for each
 behaviour, and a summary of the evidence with its paths. Do not present your
 own checks as verification. Put every human-only check from the record under
-`How to test practically`, with its exact steps. Without the gate, say in
-`Verification` that the patch was matched to the verdict by its fingerprint,
-not by the gate. Write the packet to `pr-packet.md` in the run directory,
+`How to test practically`, with its exact steps. Write the packet to
+`pr-packet.md` in the run directory,
 return its path, and stop at the approval gate.
 
 ### Step 2: the approved actions
@@ -111,21 +109,24 @@ return its path, and stop at the approval gate.
 Only when the lead sends the approval, carry out exactly the actions it names,
 in this order, and stop at the first check that fails:
 
-1. Check the patch before committing. With the gate active,
-   `node .agents/scripts/gate.mjs check` must pass. Without it,
-   `node .agents/scripts/gate.mjs fingerprint` must report the record's
-   `Patch`.
+1. Check the patch before committing:
+   `node .agents/scripts/gate.mjs check` must pass.
 2. Commit to the issue branch.
-3. Check the committed patch. With the gate active,
-   `node .agents/scripts/gate.mjs check --committed` must pass. Without it,
-   `node .agents/scripts/gate.mjs fingerprint --committed` must report the
-   same `Patch`.
+3. Check the committed patch:
+   `node .agents/scripts/gate.mjs check --committed` must pass.
 4. Push the issue branch with a normal push.
-5. Create the pull request in the approved state and move the closing issue
+5. For a ready pull request, post the verdict to GitHub with
+   `node .agents/scripts/gate.mjs publish --base <approved base>`. It posts
+   the `agent-fleet/verdict` status of the pushed commit only when the verdict
+   passes for it and for the pull request's patch against that base.
+6. Create the pull request in the approved state and move the closing issue
    to the in-review status, as `prepare-pr`'s second stage describes. Run it
    as a command of its own, after the push: the gate's hook checks the pushed
    branch before a command line runs, so it refuses a line that pushes and
    then creates or readies a pull request.
+
+After any later push to a ready pull request, the new commit has no status
+until a new round verifies it and you publish again.
 
 In a workspace of several repositories, run the checks from the workspace
 root, where they cover every repository of the change. Commit in each
@@ -133,14 +134,15 @@ repository that has a change before the committed check. Push each branch
 and create each pull request in its own repository: from inside it, after
 `cd <repository>`, or from the workspace root with
 `git -C <repository> push -u origin <branch>` and
-`gh pr create --repo <owner>/<name> --head <branch> …`. With the gate active,
-each command is checked against the repository it runs in or names, and a
-ready pull request in any repository of the change is refused while any of
-them differs from what was verified. The gate's hook reads heredoc bodies as
+`gh pr create --repo <owner>/<name> --head <branch> …`. Publish each
+repository's status with `node .agents/scripts/gate.mjs publish --repo <path>`
+from the workspace root. Each command is checked against the repository it
+runs in or names, and a ready pull request in any repository of the change is
+refused while any of them differs from what was verified. The gate's hook reads heredoc bodies as
 commands, so pass the pull request body in a file with `--body-file`, as
 `prepare-pr` does.
 
-When a check fails, or the gate's hook refuses `gh pr create` or
+When a check fails, `publish` refuses, or the gate refuses `gh pr create` or
 `gh pr ready`, the code changed after verification, something verified is
 uncommitted, or the push is missing. Stop and report which check failed with
 its output. Never work around a check.

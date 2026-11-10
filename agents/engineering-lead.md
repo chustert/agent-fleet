@@ -166,12 +166,17 @@ the packet's actions all fall inside that list and
 `node .agents/scripts/gate.mjs check` passes, write the packet to
 `<runDir>/pr-packet.md` as the record of what was approved under the standing
 authorization, then carry out Stage 2 in this order: commit,
-`node .agents/scripts/gate.mjs check --committed`, push, create the PR, with the push and the PR as separate commands. In a
+`node .agents/scripts/gate.mjs check --committed`, push,
+`node .agents/scripts/gate.mjs publish --base <base>` to post the verdict as
+the pushed commit's `agent-fleet/verdict` status, create the PR, with the push
+and the PR as separate commands. In a
 workspace, commit in every repository of the change before that check, which
 runs from the workspace root and covers them all, then push each branch and
 create each PR in its own repository: from the workspace root with
 `git -C <repository> push -u origin <branch>` and
-`gh pr create --repo <owner>/<name> --head <branch>`, or after `cd <repository>`.
+`gh pr create --repo <owner>/<name> --head <branch>`, or after `cd <repository>`,
+publishing each repository's status with
+`node .agents/scripts/gate.mjs publish --repo <path>`.
 Any action outside the list goes to the user first. Put the verdict, its proof levels and the evidence summary in the
 PR's `Verification` section, and the checks only a person can run under
 `How to test practically`.
