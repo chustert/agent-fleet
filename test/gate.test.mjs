@@ -362,6 +362,7 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     try {
       const pushed = session.run(repo, `cd ${other} && git push -q -u origin topic`);
       assert.equal(pushed.refusedBy, null, pushed.output);
+      assert.equal(pushed.code, 0, pushed.output);
       assert.equal(git(origin, "rev-parse", "topic"), git(other, "rev-parse", "topic"));
       // A shell alias runs with the same hooks path, and a commit inside it still meets pre-commit.
       const aliased = session.run(repo, `cd ${other} && echo n > n.txt && git add n.txt && git -c alias.c='!git commit -qm n' c`);
