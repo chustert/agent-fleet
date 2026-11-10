@@ -56,7 +56,9 @@ function fakeGh(dir) {
     '  "fails ") exit 4 ;;',
     // Pull request 7 proposes the session's branch; any other one proposes somebody else's.
     '  "pr view") case "$3" in *7) head=$GH_PR_HEAD ;; *) head=someone-elses ;; esac',
-    '    echo "{\\"headRefName\\":\\"$head\\",\\"isCrossRepository\\":false}"; exit 0 ;;',
+    // With GH_PR_BASE set, the branch has an open pull request against that base.
+    '    base=; [ -n "$GH_PR_BASE" ] && base=",\\"baseRefName\\":\\"$GH_PR_BASE\\",\\"state\\":\\"OPEN\\""',
+    '    echo "{\\"headRefName\\":\\"$head\\",\\"isCrossRepository\\":false$base}"; exit 0 ;;',
     "esac",
     // What an `api` call receives on standard input, as the installer's GraphQL calls send their query.
     '[ "$1" = api ] && cat >> "$GH_LOG.in"',
@@ -87,8 +89,8 @@ function startSession(project, gh, prHead, { gateFile = GATE, before = [] } = {}
   assert.equal(started.status, 0, started.stderr);
   const calls = () => (fs.existsSync(gh.log) ? fs.readFileSync(gh.log, "utf8").split("\n").filter(Boolean) : []);
   const unguarded = (cwd, command) => spawnSync("sh", ["-c", command], { cwd, encoding: "utf8", env });
-  const run = (cwd, command) => {
-    const guard = gate(cwd, ["hook", "bash-guard"], { session_id: id, cwd, tool_input: { command } });
+  const run = (cwd, command, { agent = null } = {}) => {
+    const guard = gate(cwd, ["hook", "bash-guard"], { session_id: id, ...(agent ? { agent_id: agent } : {}), cwd, tool_input: { command } });
     if (denied(guard)) return { refusedBy: "hook", output: guard.out };
     const result = spawnSync("sh", ["-c", `. "${envFile}"\n${command}`], { cwd, encoding: "utf8", env });
     return { refusedBy: result.stderr.includes("Verification gate:") ? "wrapper" : null, code: result.status, output: result.stdout + result.stderr };
@@ -249,11 +251,119 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     assert.equal(hook(repo, "bash-guard", create).out, "");
   });
 
+  test("a verifier in any tool records through a round the lead opens", () => {
+    const opened = gate(repo, ["round", "open"]);
+    assert.equal(opened.code, 0, opened.err);
+    const { key, fingerprint } = JSON.parse(opened.out);
+    assert.match(key, /^[0-9a-f]{32}$/);
+    assert.equal(fingerprint, fingerprintOf(repo));
+    const rounds = path.join(path.dirname(JSON.parse(gate(repo, ["paths"]).out).runDir), "_rounds");
+    assert.ok(fs.readdirSync(rounds).every((name) => !fs.readFileSync(path.join(rounds, name), "utf8").includes(key)),
+      "the round keeps only the key's digest");
+    const withKey = (k, verdict = "PASS") => [...record(verdict), "--key", k, "--verifier", "gpt-5.6-sol xhigh"];
+    assert.match(gate(repo, withKey("0".repeat(32))).err, /no open verification round has this key/);
+    assert.notEqual(gate(repo, [...record(), "--key"]).code, 0, "a bare --key");
+    // The patch changes while the verifier works: its evidence covers the earlier patch.
+    fs.appendFileSync(path.join(repo, "a.txt"), "during verification\n");
+    assert.match(gate(repo, withKey(key)).err, /patch changed while you were verifying/);
+    git(repo, "checkout", "--", "a.txt");
+    const recorded = gate(repo, withKey(key));
+    assert.equal(recorded.code, 0, recorded.err);
+    const entry = JSON.parse(recorded.out);
+    assert.deepEqual([entry.via, entry.verifier, entry.fingerprint], ["round", "gpt-5.6-sol xhigh", fingerprint]);
+    assert.match(gate(repo, withKey(key)).err, /each key records one verdict/);
+    assert.equal(gate(repo, ["check", "--committed"]).code, 0);
+    // Without a key, only the team's verifier agent can record, through its hooks. A record with a key mints no
+    // token for anyone to use without one.
+    hook(repo, "verifier-start", { agent_id: "team-verifier" });
+    authorize("team-verifier", `${recordCommand()} --key ${"1".repeat(32)}`);
+    assert.match(gate(repo, record()).err, /only a verifier may record a verdict/);
+  });
+
+  test("where the gate's hooks run, the agent that opened a round can't record its verdict", () => {
+    // Run for real in a session: the session opens a round, can't record with its key, and a subagent it starts can.
+    const opened = session.run(repo, `node ${GATE} round open`);
+    assert.equal(opened.code, 0, opened.output);
+    const { key } = JSON.parse(opened.output);
+    const recordWith = (k) => `node ${GATE} ${record().join(" ")} --key ${k} --verifier "gpt-5.6-sol xhigh"`;
+    const before = gate(repo, ["show"]).out;
+    const self = session.run(repo, recordWith(key));
+    assert.equal(self.refusedBy, "hook", self.output);
+    assert.match(self.output, /opened this verification round can't record/);
+    assert.equal(gate(repo, ["show"]).out, before, "nothing was recorded");
+    // Nor through a variable, which the hook can't read.
+    assert.equal(session.run(repo, `K=${key}; node ${GATE} ${record().join(" ")} --key "$K"`).refusedBy, "hook");
+    const verifier = session.run(repo, recordWith(key), { agent: "verifier-1" });
+    assert.equal(verifier.code, 0, verifier.output);
+    assert.equal(JSON.parse(gate(repo, ["show"]).out).verifier, "gpt-5.6-sol xhigh");
+    // A verifier in a session of its own records too, and a developer that opens a round for itself can't.
+    const open = `node ${GATE} round open`;
+    const lead = { session_id: "session-lead" };
+    hook(repo, "bash-guard", { ...lead, ...bash(repo, open) });
+    const second = JSON.parse(gate(repo, ["round", "open"]).out).key;
+    assert.equal(hook(repo, "bash-guard", { session_id: "session-verifier", ...bash(repo, recordWith(second)) }).out, "");
+    const developer = { session_id: "session-lead", agent_id: "developer-1" };
+    hook(repo, "bash-guard", { ...developer, ...bash(repo, open) });
+    const own = JSON.parse(gate(repo, ["round", "open"]).out).key;
+    assert.ok(denied(hook(repo, "bash-guard", { ...developer, ...bash(repo, `node .agents/scripts/gate.mjs record --key=${own} --verdict PASS`) })));
+    // Parallel issues share the round directory, one checkout each: a round belongs to its own checkout's opener.
+    const parallel = path.join(dir, "parallel");
+    git(repo, "worktree", "add", "-q", "-b", "parallel", parallel, "HEAD");
+    try {
+      hook(repo, "bash-guard", { ...lead, ...bash(repo, open) });
+      hook(parallel, "bash-guard", { session_id: "session-parallel", ...bash(parallel, open) });
+      const mine = JSON.parse(gate(repo, ["round", "open"]).out).key;
+      assert.ok(denied(hook(repo, "bash-guard", { ...lead, ...bash(repo, recordWith(mine)) })), "the opener of this checkout's round");
+      assert.equal(hook(repo, "bash-guard", { session_id: "session-parallel", ...bash(repo, recordWith(mine)) }).out, "");
+    } finally {
+      git(repo, "worktree", "remove", "--force", parallel);
+      git(repo, "branch", "-q", "-D", "parallel");
+    }
+    // The round's state is the gate's own.
+    assert.ok(denied(hook(repo, "bash-guard", bash(repo, "rm -rf .git/agent-runs/_rounds"))));
+  });
+
+  test("publish posts the passing verdict as the status of the exact pushed commit", () => {
+    const env = { PATH: `${gh.bin}${path.delimiter}${process.env.PATH}`, GH_LOG: gh.log };
+    const statuses = () => (fs.existsSync(gh.log) ? fs.readFileSync(gh.log, "utf8").split("\n").filter((line) => line.includes(":: api ")) : []);
+    fs.rmSync(gh.log, { force: true });
+    const published = gate(repo, ["publish"], undefined, env);
+    assert.equal(published.code, 0, published.err);
+    const head = git(repo, "rev-parse", "HEAD");
+    const [call] = statuses();
+    assert.ok(call.startsWith(`${fs.realpathSync(repo)} :: `), call);
+    assert.match(call, new RegExp(`api -X POST repos/\\{owner\\}/\\{repo\\}/statuses/${head} -f state=success -f context=agent-fleet/verdict `
+      + "-f description=PASS from gpt-5.6-sol xhigh for patch [0-9a-f]{12} -f target_url=https://example.com/1"));
+    // Against another base, the pull request's patch is not the verified one.
+    git(repo, "push", "-q", "origin", "HEAD:refs/heads/stack");
+    try {
+      assert.match(gate(repo, ["publish", "--base", "stack"], undefined, env).err, /patch against stack .* is not the verified patch/);
+    } finally {
+      git(repo, "push", "-q", "origin", "--delete", "stack");
+    }
+    assert.match(gate(repo, ["publish", "--base", "nowhere"], undefined, env).err, /origin\/nowhere is not known/);
+    // With a pull request open, its base is the one that counts.
+    assert.match(gate(repo, ["publish", "--base", "stack"], undefined, { ...env, GH_PR_BASE: "main" }).err, /open pull request targets main, not stack/);
+    // A commit after verification has no verdict to post, pushed or not.
+    fs.appendFileSync(path.join(repo, "a.txt"), "after verification\n");
+    git(repo, "commit", "-qam", "unverified");
+    try {
+      assert.match(gate(repo, ["publish"], undefined, env).err, /differs from the committed patch.*Nothing was posted/);
+    } finally {
+      git(repo, "reset", "-q", "--hard", "HEAD~1");
+    }
+    assert.equal(statuses().length, 1, "only the first call posted");
+  });
+
   test("a pull request command is judged in the repository it really runs in", () => {
     // This repository's pull request passes. The hook reads a command against the directory the session is in, so it
     // lets each of these through, and the wrapper refuses them where they run or for the repository they name.
     const script = path.join(dir, "open.sh");
     const mutation = path.join(dir, "mutation.json");
+    const status = path.join(dir, "status.json");
+    fs.writeFileSync(status, JSON.stringify({ state: "success", context: "agent-fleet/verdict" }));
+    const escaped = path.join(dir, "escaped.json");
+    fs.writeFileSync(escaped, '{"state":"success","context":"agent-fleet\\/verdict"}');
     fs.writeFileSync(mutation, JSON.stringify({ query: "mutation { createPullRequest(input: {}) { clientMutationId } }" }));
     for (const command of [
       `cd ${other} && gh pr create --title t`,
@@ -279,6 +389,12 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
       `A=api; gh $A --input ${mutation} graphql`,
       `A=api; gh $A graphql -F query=@${mutation}`,
       `A=api; cat ${mutation} | gh $A graphql --input -`,
+      // The verdict's status, which only gate.mjs posts, after checking the verdict.
+      "gh api repos/o/r/statuses/abc123 -f state=success -f context=agent-fleet/verdict",
+      `gh api -X POST repos/o/r/statuses/abc123 --input ${status}`,
+      "gh api repos/o/r/statuses/abc123 -fstate=success -fcontext=agent-fleet/verdict",
+      `gh api repos/o/r/statuses/abc123 --input ${escaped}`,
+      "gh api repos/o/r/pulls -ftitle=t -fhead=x -fbase=main",
     ]) {
       assert.equal(session.holdsPr(repo, command), "wrapper", command);
     }
@@ -296,6 +412,16 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     }
     // Any other GraphQL request passes, with its standard input, as the installer and the sprint scripts send theirs.
     session.opens(repo, `A=api; echo '{"query":"query { viewer { login } }"}' | gh $A graphql --input -`);
+    session.opens(repo, "gh api repos/o/r/statuses/abc123 -f state=success -f context=ci/build");
+    session.opens(repo, "gh api repos/o/r/commits/abc123/statuses --jq '.[] | select(.context == \"agent-fleet/verdict\")'");
+    // A new base gives the pull request another patch than the verified one.
+    git(repo, "push", "-q", "origin", "HEAD:refs/heads/stack");
+    try {
+      assert.equal(session.holdsPr(repo, "gh pr edit 7 --base stack"), "wrapper");
+      session.opens(repo, "gh pr edit 7 --base main");
+    } finally {
+      git(repo, "push", "-q", "origin", "--delete", "stack");
+    }
     assert.match(fs.readFileSync(`${gh.log}.in`, "utf8"), /viewer \{ login \}/);
   });
 
@@ -564,6 +690,7 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
   let dir;
   let ws;
   let report;
+  let gh;
   let session;
   const child = (name) => path.join(ws, name);
   const origin = (name) => path.join(dir, "acme", `${name}.git`);
@@ -610,7 +737,8 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
     // c keeps its default branch checked out, with a commit its origin lacks.
     fs.appendFileSync(path.join(child("c"), "app.txt"), "unverified\n");
     commit(child("c"), "unverified");
-    session = startSession(ws, fakeGh(dir), "feature/7-across");
+    gh = fakeGh(dir);
+    session = startSession(ws, gh, "feature/7-across");
     report = path.join(dir, "report.md");
     fs.writeFileSync(report, "report\n");
   });
@@ -711,6 +839,22 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
     git(child("b"), "reset", "-q", "--hard", "HEAD~1");
     session.opens(child("a"), "gh pr create --title t");
   });
+  test("a round covers every member, and publish posts each member's status", () => {
+    const opened = JSON.parse(gate(child("a"), ["round", "open"]).out);
+    assert.deepEqual(opened.repos.map((r) => r.path), ["a", "b"]);
+    const recorded = gate(ws, [...record(), "--key", opened.key, "--verifier", "gpt-5.6-sol xhigh"]);
+    assert.equal(recorded.code, 0, recorded.err);
+    assert.equal(JSON.parse(recorded.out).fingerprint, opened.fingerprint);
+    const env = { PATH: `${gh.bin}${path.delimiter}${process.env.PATH}`, GH_LOG: gh.log };
+    fs.rmSync(gh.log, { force: true });
+    const published = gate(ws, ["publish", "--repo", "a"], undefined, env);
+    assert.equal(published.code, 0, published.err);
+    const [call] = fs.readFileSync(gh.log, "utf8").split("\n").filter((line) => line.includes(":: api "));
+    assert.ok(call.startsWith(`${fs.realpathSync(child("a"))} :: `), call);
+    assert.match(call, new RegExp(`statuses/${git(child("a"), "rev-parse", "HEAD")} .*description=PASS from gpt-5.6-sol xhigh for patch [0-9a-f]{12}, with b`));
+    assert.match(gate(ws, ["publish", "--repo", "b"], undefined, env).err, /no pushed counterpart.*Nothing was posted/);
+  });
+
   test("without the wrappers, nothing in a workspace pushes or opens a pull request", () => {
     // Which repository a command acts on depends on where it runs, and only the wrappers see that. A session whose
     // session-start hook didn't run has none, so the hook refuses there what it would otherwise leave to them.

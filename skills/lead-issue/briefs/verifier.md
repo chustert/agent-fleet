@@ -55,11 +55,10 @@ to every claim you make.
      cross-model second opinion, copy that authorization into the reviewer's
      brief word for word; it is the one online service the review may use.
      Otherwise tell the reviewer to skip it. When you cannot start an agent,
-     do not review inline: write `Review: pending` in the record's header and
-     `Pending: the lead runs the independent review` as the code review
-     section, and the lead starts the reviewer after you return. When you
-     record with the gate (step 5), you cannot leave the review pending: run
-     it inline as `verify-work` describes and say it was not independent.
+     run the review inline as `verify-work` describes, write
+     `Review: inline, not independent` in the record's header, and say so in
+     the code review section. The lead then starts an independent reviewer
+     after you return.
 
 3. **Grade.** Give every acceptance criterion `Pass`, `Fail` or
    `Not verified` with its proof level, and label every claim in the record
@@ -72,8 +71,8 @@ to every claim you make.
    Verdict: <PASS|PASS+NOTES|FAIL|BLOCKED>
    Blocking: <count of Fail criteria + open P0-P2 findings>
    Patch: <fingerprint from step 1>
-   Review: <done|pending>
-   Reviewer model: <model and effort, entries skipped and why; or pending>
+   Review: <done|inline, not independent>
+   Reviewer model: <model and effort, entries skipped and why; or inline>
    Human-only checks: <list, or none>
    ```
 
@@ -82,17 +81,19 @@ to every claim you make.
    edit, or untracked files your build or the harness created. Name them in
    the record and use `BLOCKED`, so the lead can get them removed or ignored.
 
-5. **Record with the gate, when you can.** When you were started as the
-   project's `verifier` agent type, record the verdict as a command of its
-   own:
+5. **Record the verdict with the gate,** with the round's key from your brief
+   and the model and effort you run on, as a command of its own:
 
    ```
-   node .agents/scripts/gate.mjs record --verdict <V> --blocking <n> --issue <url> --report <evidence directory>/verification.md
+   node .agents/scripts/gate.mjs record --key <key> --verifier "<model and effort>" --verdict <V> --blocking <n> --issue <url> --report <evidence directory>/verification.md
    ```
 
-   The gate refuses `PASS` or `PASS+NOTES` with blocking findings, and refuses
-   them when the patch changed since you started. Otherwise do not run
-   `record`; it refuses any other agent, and the record file is the verdict.
+   In a workspace, run it from the workspace root. The gate refuses `PASS` or
+   `PASS+NOTES` with blocking findings, and refuses them when the patch changed
+   since the lead opened the round. Each key records one verdict, so get the
+   record file right first. Never show the key anywhere else. When your brief
+   has no key, record nothing: say so when you return, and the lead opens a
+   round for the next verifier.
 
 Return the record's path and its header.
 
@@ -113,8 +114,8 @@ Return the record's path and its header.
   Doctor fails, the harness has drifted, or a prerequisite is missing. Name
   the exact blocker and the command that showed it.
 
-With the review pending, choose the verdict from the acceptance criteria alone.
-The lead combines it with the review.
+With an inline review, choose the verdict as above. The lead combines it with
+the independent review that follows.
 
 Never upgrade a verdict because the code looks right, the tests are green, or
 the author says it works.

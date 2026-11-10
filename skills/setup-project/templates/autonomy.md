@@ -11,10 +11,10 @@ Without this file, the lead asks the user at every gate. `setup-project` writes 
 | Start an issue: create the local branch, assign the authenticated user, move the issue to the started status | As `start-issue` describes |
 | Local edits on the issue branch, through the developer | Within the issue's scope |
 | Local verification: builds, tests, the `verify-<app>` harness, local services, seeded disposable data | Never against hosted, staging or production systems |
-| Commit to the issue branch | Only content the latest passing verdict covers. Before pushing, the committed patch must match it: `node .agents/scripts/gate.mjs check --committed` passes when the gate is active, and otherwise `node .agents/scripts/gate.mjs fingerprint --committed` prints the verdict's `Patch` |
+| Commit to the issue branch | Only content the latest passing verdict covers. Before pushing, the committed patch must match it: `node .agents/scripts/gate.mjs check --committed` passes |
 | Push the issue branch to `origin` | Normal push; never force, never the default branch |
 | Open a draft pull request | Any time, so CI runs alongside the work |
-| Create a ready-for-review pull request, or mark a draft ready | Only when the committed patch matches the latest passing verdict, as for a commit, and the commit is pushed. The packet is saved to the run directory as the record |
+| Create a ready-for-review pull request, or mark a draft ready | Only when the committed patch matches the latest passing verdict, as for a commit, and the commit is pushed. This includes posting the verdict as the commit's `agent-fleet/verdict` status with `node .agents/scripts/gate.mjs publish`. The packet is saved to the run directory as the record |
 | Move the closing issue to the in-review status | After the ready pull request is created, as `prepare-pr` describes |
 | Draft issues with the spec writer | Drafts only; filing needs the user |
 | Send the patch for the cross-model second opinion | Only through `.agents/scripts/second-opinion.mjs`, which leaves protected files out, and only when the `Command` row below names a command |

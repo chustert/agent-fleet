@@ -53,17 +53,14 @@ you start one. An agent you continue keeps the model it started on.
    describes. When it offers no way, tell the user you will write each brief to
    a file for them to start in a new session. Never do a role's work in this
    conversation.
-3. Find out whether the verification gate is active. It is active when you can
-   start an agent of the type `verifier`, a definition that the agent team
-   installs together with the gate's hooks. Those hooks refuse a ready pull
-   request unless that `verifier` agent recorded a passing verdict for the
-   exact patch, so with the gate active, start every verifier as that type.
-   Choose its model only from the `Verifier` entries that type can run on, as
-   "Choose the model" describes. When that skips an entry, tell the user once
-   that the gate needs the `verifier` type. Without the gate, the verifier's
-   record file holds the verdict. The developer checks the patch against its
-   fingerprint before it commits and pushes, and you confirm the match once
-   the pull request exists.
+3. Know how the verification gate, `.agents/scripts/gate.mjs`, takes the
+   verdict. Every verifier records its verdict with the gate, on any model and
+   in any tool: you open a round for it just before you start it, and give it
+   the round's key. The developer then posts the passing verdict to GitHub as
+   the `agent-fleet/verdict` status of the pushed commit, which the
+   repository can require before a pull request merges. Where the gate's
+   hooks are installed, the gate also refuses a ready pull request without a
+   passing verdict for the exact patch.
 4. Resolve the issue from the link or number the user gave, and read it with
    every comment. When the user gave none, ask.
 5. When `docs/agents/verification.md` names no `verify-<app>` harness, say so
@@ -126,9 +123,21 @@ the same brief and the start record's path.
 ### 3. Verify, with a fresh verifier
 
 Run `node .agents/scripts/gate.mjs paths` for the run directory and base. The
-evidence directory for round `<n>` is `<run directory>/round-<n>/`. Start a new
-verifier, as the `verifier` type when the gate is active, with its brief and:
+evidence directory for round `<n>` is `<run directory>/round-<n>/`.
 
+Just before you start the verifier, open its round with
+`node .agents/scripts/gate.mjs round open`, from the checkout or, in a
+workspace, from the workspace root. The gate takes the patch then and prints a
+one-time key. Put the key in this verifier's brief and nowhere else: not in
+another agent's brief, a task list, or a record. When you hand briefs to the
+user as files, it goes in that verifier's file only. Where the gate's hooks run, the
+agent that opened a round can't record its verdict, so never record with the
+key yourself.
+
+Start a new verifier with its brief and:
+
+- the round's key, and the model and effort you started it on, for it to
+  record with;
 - the issue link and any approved specification link;
 - every affected repository, the branch, the base commit, and the evidence
   directory. In a workspace, also give each repository's path from the
@@ -148,14 +157,15 @@ verifier reaches its verdict from the evidence alone.
 ### 4. Decide from the record
 
 Read the record the verifier wrote to `<evidence directory>/verification.md`,
-not its chat summary. With the gate active, the verdict is what
-`node .agents/scripts/gate.mjs show` prints.
+not its chat summary. The verdict is what `node .agents/scripts/gate.mjs show`
+prints. When the verifier recorded none, the round has no verdict: find out
+why from its record, and start a new round.
 
-When the record's header says `Review: pending`, the verifier could not start
-the reviewer. Start a new reviewer with its brief, the issue link, the
-repositories, branch and base, and the evidence directory, and nothing from the
-record, on a model from the `Reviewer` row. Then take the round's verdict as
-the stricter of the two:
+When the record says the review was not independent, because the verifier
+could not start a reviewer and reviewed inline, start a new reviewer with its
+brief, the issue link, the repositories, branch and base, and the evidence
+directory, and nothing from the record, on a model from the `Reviewer` row.
+Then take the round's verdict as the stricter of the two:
 
 - `FAIL` when the verifier's verdict is `FAIL` or the review has an open P0,
   P1 or P2 finding;
@@ -206,14 +216,12 @@ order from the change note. Approve the packets together.
 
 1. **Packet.** Continue the developer: run `prepare-pr` up to its approval
    gate and write the packet to `<run directory>/pr-packet.md`. Give it the
-   passing round's record path and its `round.md`, the record's `Patch`
-   fingerprint, and whether the gate is active.
+   passing round's record path and its `round.md`, and the record's `Patch`
+   fingerprint.
 2. **Check the packet.** Its `Verification` section must match the record:
    the same verdict, no behaviour stated at a higher proof level than the
    record shows, and every human-only check under `How to test practically`.
-   Without the gate, the section must also say that the patch was matched to
-   the verdict by its fingerprint, not by the gate. Send corrections back to
-   the developer.
+   Send corrections back to the developer.
 3. **Approve.** `docs/agents/autonomy.md` records which of the packet's
    actions the user approved in advance, such as committing, pushing the issue
    branch, creating a ready-for-review pull request, and moving the issue to
@@ -226,12 +234,13 @@ order from the change note. Approve the packets together.
    commits and before it pushes, and it stops at the first one that fails.
 5. **Confirm.** When the developer returns the pull request, or one per
    repository in a workspace, check each from read-only evidence:
-   `gh pr view` shows the approved base and state, and in the checkout, or the
-   workspace root, `node .agents/scripts/gate.mjs check --committed` passes with
-   the gate active, or `node .agents/scripts/gate.mjs fingerprint --committed`
-   reports the verdict's `Patch` without it. When it doesn't, the code changed
-   after verification or something verified was left out. Have the developer
-   turn the pull request back into a draft, tell the user, and verify again.
+   `gh pr view` shows the approved base and state, `gh pr checks` shows the
+   `agent-fleet/verdict` status passing for a ready pull request, and in the
+   checkout, or the workspace root,
+   `node .agents/scripts/gate.mjs check --committed` passes. When it doesn't,
+   the code changed after verification or something verified was left out.
+   Have the developer turn the pull request back into a draft, tell the user,
+   and verify again.
 
 When the developer reports a failed patch check, or that the gate's hook
 refused `gh pr create` or `gh pr ready`, find out why and verify again. Never
@@ -286,7 +295,8 @@ nothing the file does not list.
 - Never edit product code, tests, the harness, or the profile, and never
   commit, push, or create, edit, or mark ready a pull request yourself. Role
   agents make every change. Write only under the run directory.
-- Never record a verdict, and never write a verifier's record for it.
+- Never record a verdict, never use a round's key, and never write a
+  verifier's record for it.
 - Never pass the developer's reasoning to a verifier or reviewer.
 - Never treat green CI, a passing test suite, or an agent's summary as proof.
 - Never merge, force-push, push to the default branch, or close issues.

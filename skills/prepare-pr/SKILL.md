@@ -260,6 +260,13 @@ Immediately before creating or updating the PR:
    force-push unless the user separately requests it.
 5. Write the approved body to a temporary file outside the repository and use
    that file with the GitHub CLI or API to avoid shell-quoting corruption.
+   For a ready PR, when `node .agents/scripts/gate.mjs show` reports a
+   verdict for the branch, post it with
+   `node .agents/scripts/gate.mjs publish --base <approved base>` after the
+   push. It sets the pushed commit's `agent-fleet/verdict` status only when the
+   verdict passes for the PR's exact patch. Approval to create the ready PR
+   covers it. When it refuses, the verdict doesn't cover what will be
+   proposed: stop and report its output.
 6. Create the PR against the approved base in the approved draft/ready state.
    Do not add labels, reviewers, assignees, milestones, or issue comments unless
    explicitly authorized.
