@@ -36,6 +36,7 @@ const fingerprintOf = (cwd, ...flags) => JSON.parse(gate(cwd, ["fingerprint", ..
 describe("verification gate", { skip: process.platform === "win32" }, () => {
   let dir;
   let repo;
+  let other;
   let report;
   const env = { AGENT_GATE_BASE: "" };
 
@@ -55,6 +56,8 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     git(repo, "commit", "-qm", "init");
     git(repo, "push", "-q", "origin", "main");
     git(repo, "switch", "-q", "-c", "feature/1-test");
+    sh(dir, "git", ["clone", "-q", path.join(dir, "origin.git"), "other"]);
+    other = path.join(dir, "other");
     report = path.join(dir, "report.md");
     fs.writeFileSync(report, "report\n");
   });
@@ -135,8 +138,32 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
       `cd ${repo} && gh pr create --title t --body "$(cat <<'EOF'\nSee "the plan" (step 2); done.\nEOF\n)"`,
       `cd ${repo} && git push -u origin feature/1-test 2>&1 | tail -3`,
       "gh pr create --title t --body-file - <<'EOF'\nbody\nEOF",
+      "if true; then gh pr create --title t; fi",
+      "gh pr create --title 'Use `x` in y' --body-file body.md",
     ]) {
       assert.equal(hook(repo, "bash-guard", bash(repo, command)).out, "", command);
+    }
+    // With a passing verdict here, a pull request command on a line that changes into another repository, or names
+    // another one, would be judged by this repository's verdict, so it is refused.
+    const intoOther = hook(repo, "bash-guard", bash(repo, `cd ${other} && gh pr create --title t`));
+    assert.match(intoOther.out, /changes into .*another repository/);
+    for (const command of [
+      `cd ${other}; gh pr ready 3`,
+      `pushd ${other} && gh pr ready`,
+      `if true; then cd ${other}; fi; gh pr create --title t`,
+      `eval 'cd ${other}' && gh pr create --title t`,
+      `bash -c "cd ${other} && gh pr create --title t"`,
+      "cd $OTHER && gh pr create --title t",
+      `env -C ${other} gh pr create --title t`,
+      "source ./go.sh; gh pr create --title t",
+      `gh pr create --title "x\`cd ${other}\`"`,
+      "GH_REPO=o/r gh pr create --title t",
+      `GIT_DIR=${other}/.git gh pr create --title t`,
+      "gh pr create --repo o/r --title t",
+      "gh pr -R o/r create --title t",
+      "gh pr ready https://github.com/o/r/pull/1",
+    ]) {
+      assert.ok(denied(hook(repo, "bash-guard", bash(repo, command))), command);
     }
   });
 
@@ -187,62 +214,103 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     }
   });
 
-  test("the reader skips no text, so nothing hides a push or a pull request", () => {
-    // Each hides `git push origin main`, or a command the gate can't place, where the second review found the first
-    // reader skipped text: unquoted heredoc bodies, comments, heredocs a shell runs, odd delimiters, arithmetic.
+  test("the reader reads more than its first version, never less", () => {
+    // Each hides `git push origin main` or a ready pull request. The first reader saw those in heredoc bodies and
+    // comments, which it reads as commands, and missed the rest: behind a shell keyword or a wrapper with options, in a
+    // script a shell takes, in eval or trap, under find -exec, or after a quote or substitution that never closes.
     for (const command of [
       "cat <<EOF\n$(git push origin main)\nEOF",
       "cat <<EOF\n`git push origin main`\nEOF",
       "# note: see <<EOF\ngit push origin main",
-      "git status # see <<EOF\ngit push origin main",
       "# don't forget\ngit push origin main",
+      "# say \"hi\ngit push origin main",
+      "# see $(x\ngit push origin main",
       "cat <<'EOF' | sh\ngit push origin main\nEOF",
       "<<EOF bash\ngit push origin main\nEOF",
       "bash -c \"$(cat <<'EOF'\ngit push origin main\nEOF\n)\"",
       "bash <<< \"git push origin main\"",
-      "cat <<E\"O\"F\nhello\nEOF\ngit push origin main",
-      "cat <<END:X\nhello\nEND:X\ngit push origin main",
+      "bash 0<<<'git push origin main'",
       "((m = 1<<2))\ngit push origin main",
       "echo ${#x} ; git push origin main",
-      "find . -name a.txt -execdir git push origin feature/1-test {} +",
+      "if true; then git push origin main; fi",
+      "for b in x; do git push origin main; done",
+      "! git push origin main",
+      "env FOO=1 git push origin main",
+      "timeout 10 git push origin main",
+      "sudo -u me git push origin main",
+      "find . -maxdepth 0 -exec sh -c 'git push origin main' {} +",
+      "find . -maxdepth 0 -execdir git push origin main {} +",
+      "bash -c -- 'git push origin main'",
+      "bash -c -x 'git push origin main'",
+      "trap -- 'git push origin main' EXIT",
+      "eval 'git push origin main'",
+      "git push origin 'refs/heads/*'",
+      "git push origin HEAD:heads/main",
+      "git push --branches",
+      "git -c remote.origin.push=HEAD:main push",
       "echo 'unclosed ; gh pr create --title t",
+      "if true; then gh pr ready 3; fi",
+      "timeout 10 gh pr create --title t",
+      "sudo -u me gh pr ready 3",
+      "gh pr new --title t",
+      "gh pr --repo=o/r ready 3",
+      "gh api graphql -F query=@m.graphql",
+      "gh api -X POST repos/o/r/pulls -f head=x",
+      "gh api --method PATCH repos/o/r/pulls/3",
     ]) {
       assert.ok(denied(hook(repo, "bash-guard", bash(repo, command))), command.replace(/\n/g, "\\n"));
     }
-    for (const command of ["git status # it's fine", "echo ${#x}", "git push -u origin feature/1-test # once"]) {
-      assert.equal(hook(repo, "bash-guard", bash(repo, command)).out, "", command);
+    for (const command of [
+      "git status # it's fine",
+      "echo ${#x}",
+      "git push -u origin feature/1-test # once",
+      "git commit -m \"$(cat <<'EOF'\nMake git push safer\nEOF\n)\"",
+      "git commit -m \"$(cat <<'EOF'\nDon't let git push reach the default branch\nEOF\n)\"",
+      "git status # then git push",
+      "cat > /tmp/notes.md <<'EOF'\nrun git push origin main later\nEOF",
+      "git push -u origin \"$(git branch --show-current)\"",
+      "echo run gh pr create",
+      "echo git push origin main",
+    ]) {
+      assert.equal(hook(repo, "bash-guard", bash(repo, command)).out, "", command.replace(/\n/g, "\\n"));
     }
   });
 
-  test("the third review's forms are refused, and plain mentions of git push are not", () => {
+  test("a push that names no branch is checked in every repository it may run in", () => {
+    // other has main checked out. The first gate checked only this repository's branch.
     for (const command of [
-      "bash <<'EOF'\ngit push origin 'main'\nEOF",
-      "cat <<'EOF' | sh\ngit push origin \"main\"\nEOF",
-      "cat <<$'EOF'\nx\nEOF\ngit push origin 'main'",
-      "gh pr new --title t",
-      "gh pr --repo=o/r ready 3",
-      "git push origin 'refs/heads/*'",
-      "git push --branches",
-      "git -c remote.origin.push=HEAD:main push",
-      "git push origin \"${B:-main}\"",
-      "git push origin $'main'",
-      "$'cd' sub; git push",
-      "CD=cd; $CD sub; git push",
-      "chdir sub; git push",
-      "find . -maxdepth 0 -exec sh -c 'git push origin main' {} +",
-      "bash -c -- 'git push origin main'",
-      "trap 'git push origin main' EXIT",
-      "eval 'git push origin main'",
-      "gh api graphql -F query=@m.graphql",
+      `cd ${other} && git push`,
+      `git -C ${other} push`,
+      `cd ${other}; git push origin HEAD`,
+      `(cd ${other}) && git push -u origin @`,
+      `pushd ${other} && git push`,
+      `if true; then cd ${other}; fi; git push`,
+      `env -C ${other} git push`,
+      `GIT_DIR=${other}/.git git push`,
+      `git --git-dir=${other}/.git push`,
+      "cd $OTHER && git push",
+      `\`echo cd\` ${other} && git push`,
+      "cd - && git push",
+      "git -C $X push",
+      "source ./x.sh; git push",
     ]) {
-      assert.ok(denied(hook(repo, "bash-guard", bash(repo, command))), command.replace(/\n/g, "\\n"));
+      assert.ok(denied(hook(repo, "bash-guard", bash(repo, command))), command);
     }
     for (const command of [
-      "git commit -m \"$(cat <<'EOF'\nMake git push safer\nEOF\n)\"",
-      "git status # then git push",
-      "cat > /tmp/notes.md <<'EOF'\nrun git push origin main later\nEOF",
+      `cd ${repo} && git push`,
+      `cd ${other} && git push origin feature/1-test`,
+      `git -C ${repo} push origin HEAD`,
+      "cd missing-dir; git push",
+      "git push -u origin HEAD",
     ]) {
-      assert.equal(hook(repo, "bash-guard", bash(repo, command)).out, "", command.replace(/\n/g, "\\n"));
+      assert.equal(hook(repo, "bash-guard", bash(repo, command)).out, "", command);
+    }
+    // A push refspec in the repository's config pushes the default branch without naming it.
+    git(repo, "config", "remote.origin.push", "HEAD:main");
+    try {
+      assert.ok(denied(hook(repo, "bash-guard", bash(repo, "git push"))), "configured push refspec");
+    } finally {
+      git(repo, "config", "--unset", "remote.origin.push");
     }
   });
 
@@ -378,6 +446,11 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
       assert.ok(!allowed(ws, command), command);
     }
     assert.ok(!allowed(child("a"), "gh pr create --title t"), "from the member itself");
+    // A push that names no branch is checked in each repository the line may run in: c has main checked out.
+    for (const command of ["cd c && git push", "git -C c push", "cd c; git push origin HEAD"]) {
+      assert.ok(!allowed(ws, command), command);
+    }
+    assert.ok(allowed(ws, "cd a && git push"), "a has the issue branch checked out");
   });
 
   test("workspace set names members that are repositories of their own", () => {
@@ -420,80 +493,69 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
   });
 
   test("a member's ready pull request needs its own pushed patch and every other member's verified patch", () => {
-    assert.ok(allowed(ws, "cd a && gh pr create --title t"), "cd from the root");
+    assert.ok(allowed(child("a"), "gh pr create --title t"), "from the member itself");
     assert.ok(allowed(ws, "gh -R acme/a pr create --head feature/7-across --title t"), "--repo and --head from the root");
     assert.ok(allowed(ws, "gh pr create --repo acme/a --head feature/7-across --title t"), "--repo after the subcommand");
     assert.ok(!allowed(ws, "gh -R acme/a pr create --title t"), "--repo for another repository needs --head");
     assert.ok(!allowed(ws, "gh -R acme/a pr create --head other --title t"), "--head must be the branch the gate checks");
+    assert.ok(!allowed(ws, "gh pr create --repo acme/c --head feature/7-across --title t"), "c is not a member");
     assert.ok(!allowed(child("a"), "gh pr create --repo acme/b --title t"), "--repo after the subcommand counts");
     assert.ok(!allowed(ws, "gh -R acme/a pr ready 3"), "ready for another repository runs from its directory");
-    assert.ok(!allowed(ws, "cd a && gh pr ready https://github.com/acme/c/pull/1"), "a URL of another repository");
+    assert.ok(!allowed(child("a"), "gh pr ready https://github.com/acme/c/pull/1"), "a URL of another repository");
     assert.ok(!allowed(child("a"), "gh pr edit https://github.com/acme/c/pull/1 --base main"), "retarget by URL elsewhere");
-    assert.ok(allowed(ws, "cd a && gh pr ready https://github.com/acme/a/pull/1"), "a URL of this repository");
-    assert.ok(allowed(ws, "cd a && git push -u origin feature/7-across 2>&1 | tail -3"), "a pipe after the leading cd");
-    assert.ok(allowed(ws, "cd a && echo $(date) && gh pr create --title t"), "a substitution that changes no directory");
-    assert.ok(allowed(ws, "cd a && gh pr create --title t --body \"$(cat <<'EOF'\nA \"quoted\" body (with a paren; and a semicolon), that doesn't end early\nEOF\n)\""),
+    assert.ok(!allowed(child("a"), "gh pr edit --base main https://github.com/acme/c/pull/1"), "a selector URL after the flags");
+    assert.ok(allowed(child("a"), "gh pr ready https://github.com/acme/a/pull/1"), "a URL of this repository");
+    assert.ok(allowed(child("a"), "gh pr create --title t --body 'Part of https://github.com/acme/b/pull/2'"), "a companion link in the body");
+    assert.ok(allowed(child("a"), "echo $(date) && gh pr create --title t"), "a substitution that changes no directory");
+    assert.ok(allowed(child("a"), "gh pr create --title t --body \"$(cat <<'EOF'\nA \"quoted\" body (with a paren; and a semicolon), that doesn't end early\nEOF\n)\""),
       "a heredoc body with quotes, parentheses and an apostrophe");
-    // A body of data, with a plain delimiter and nothing on the line that runs text as a script, may say anything.
-    assert.ok(allowed(ws, "cd a && gh pr create --title t --body \"$(cat <<'EOF'\nFirst run:\ncd elsewhere\ngit push origin main\nEOF\n)\""),
-      "a body of data that reads like commands");
-    assert.ok(!allowed(ws, "cd a && bash <<'EOF'\ncd ../c\ngh pr create --title t\nEOF"), "the same fed to a shell is a script");
-    assert.ok(allowed(ws, "cd a && gh pr create --title t --body 'Part of https://github.com/acme/b/pull/2'"), "a companion link in the body");
-    assert.ok(!allowed(ws, "cd a && gh pr edit --base main https://github.com/acme/c/pull/1"), "a selector URL after the flags");
-    assert.ok(!allowed(ws, "git -C c push origin @"), "@ is HEAD, and c is on main");
-    assert.ok(allowed(ws, "cd a && gh pr create --title t --body-file /tmp/body.md"), "the body in a file");
-    assert.ok(allowed(child("a"), "gh pr create --title t"), "from the member itself");
-    assert.ok(allowed(ws, 'cd a && gh pr create --title "Fix (x) & y" 2>&1'), "quotes and redirections don't count");
-    assert.ok(!allowed(ws, "cd b && gh pr create --title t"), "b is not pushed");
-    assert.ok(!allowed(ws, "cd c && gh pr create --title t"), "c is not a member");
+    // Heredoc bodies are read as commands, so a body that reads like a push to the default branch goes in a file.
+    assert.ok(!allowed(child("a"), "gh pr create --title t --body \"$(cat <<'EOF'\nFirst run:\ngit push origin main\nEOF\n)\""),
+      "a body that reads like a push");
+    assert.ok(allowed(child("a"), "gh pr create --title t --body-file /tmp/body.md"), "the body in a file");
+    assert.ok(allowed(child("a"), 'gh pr create --title "Fix (x) & y" 2>&1'), "quotes and redirections don't count");
+    assert.ok(allowed(ws, "cd a && git push -u origin feature/7-across 2>&1 | tail -3"), "a push that names its branch");
+    assert.ok(!allowed(child("b"), "gh pr create --title t"), "b is not pushed");
+    assert.ok(!allowed(child("c"), "gh pr create --title t"), "c is not a member, and has no verdict of its own");
     assert.ok(!allowed(ws, "gh pr create --title t"), "the workspace repository is not a member");
     fs.appendFileSync(path.join(child("b"), "app.txt"), "after verification\n");
     commit(child("b"), "late");
-    assert.ok(!allowed(ws, "cd a && gh pr create --title t"), "b changed after verification");
+    assert.ok(!allowed(child("a"), "gh pr create --title t"), "b changed after verification");
     git(child("b"), "reset", "-q", "--hard", "HEAD~1");
-    assert.ok(allowed(ws, "cd a && gh pr create --title t"), "b is back to the verified patch");
+    assert.ok(allowed(child("a"), "gh pr create --title t"), "b is back to the verified patch");
   });
 
-  test("a directory change the gate can't follow is refused", () => {
+  test("a pull request command never runs on a line that changes into another repository", () => {
+    // a's pull request passes from a's directory, so each of these would be judged by a's verdict while it acts on b,
+    // or from the workspace root, which is not a member.
+    assert.ok(allowed(child("a"), "gh pr create --title t"));
+    assert.ok(allowed(child("a"), `cd ${child("a")} && gh pr create --title t`), "a cd within the same repository");
+    assert.match(hook(ws, "bash-guard", bash(ws, "cd a && gh pr create --title t")).out, /--repo <owner>\/<name> --head <branch>/);
     for (const command of [
-      "(cd a) ; gh pr create --title t",
-      "cd a & gh pr create --title t",
+      "cd ../b && gh pr create --title t",
+      "(cd ../b) ; gh pr create --title t",
+      "cd ../b & gh pr create --title t",
+      "cd ../b || gh pr create --title t",
+      "cd ../b && true; gh pr create --title t",
+      "cd ../b; popd; gh pr create --title t",
+      'bash -c "gh pr create --title t"; cd ../b',
+      "if true; then cd ../b; fi; gh pr create --title t",
+      "builtin cd ../b && gh pr create --title t",
+      "pushd ../b && gh pr create --title t",
+      "cd .. && gh pr create --title t",
+      "eval 'cd ../b' && gh pr create --title t",
+      'bash -c "cd ../b && gh pr create --title t"',
+      "bash <<'EOF'\ncd ../b\ngh pr create --title t\nEOF",
       "cd $REPO && gh pr create --title t",
-      "cd a || gh pr create --title t",
-      'bash -c "gh pr create --title t"; cd a',
-      "cd a; popd; gh pr create --title t",
-      "GH_REPO=acme/a gh pr create --title t",
-    ]) {
-      assert.ok(!allowed(ws, command), command);
-    }
-  });
-
-  test("the review's ways of changing directory unseen are closed", () => {
-    // Most of these got through the first version of workspace mode: each pushes c's main, or judges a pull request
-    // in a repository other than the one it acts on. `timeout` and `sudo -u` hid `gh` from every earlier gate.
-    for (const command of [
-      'cd c && git push -o "`cd ..`"',
-      'cd a && gh pr create --title "x`cd ..`"',
-      "if true; then cd c; fi; git push",
-      "if true; then cd a; fi; gh pr create --title t",
-      "builtin cd a && gh pr create --title t",
-      "command cd c; git push",
-      "eval 'cd a' && gh pr create --title t",
-      "env -C a gh pr create --title t",
-      "GIT_DIR=a/.git GIT_WORK_TREE=a gh pr create --title t",
-      "git --git-dir=c/.git --work-tree=c push",
-      "GIT_DIR=c/.git git push",
-      "export GIT_DIR=c/.git; git push",
-      "git -C c -C . push",
+      "env -C ../b gh pr create --title t",
+      "sudo -D ../b gh pr create --title t",
       "source ./go.sh; gh pr create --title t",
-      'bash -c "cd a && gh pr create --title t"',
-      "bash <<'EOF'\ncd c\ngit push\nEOF",
-      "cd a && true; gh pr create --title t",
-      "cd a && gh pr create --title t # ; cd ..",
-      "timeout 10 gh pr create --title t",
-      "sudo -u me gh pr create --title t",
+      'gh pr create --title "x`cd ../b`"',
+      "`echo cd` ../b && gh pr create --title t",
+      "GH_REPO=acme/b gh pr create --title t",
+      "GIT_DIR=../b/.git GIT_WORK_TREE=../b gh pr create --title t",
     ]) {
-      assert.ok(!allowed(ws, command), command);
+      assert.ok(!allowed(child("a"), command), command);
     }
   });
 
@@ -521,13 +583,30 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
     assert.equal(JSON.parse(gate(child("a"), ["set-base", base, "--repo", "b"]).out).path, "b");
   });
 
-  test("nobody pushes a member's default branch from the workspace root", () => {
-    for (const command of ["git -C c push", "cd c && git push", "git -C c push origin main", "git -C $X push",
-      "(cd c) && git push", "cd c && git push origin HEAD"]) {
+  test("in a workspace, a push names its branch", () => {
+    for (const command of [
+      "git push", "git -C a push", "git -C a push -u origin HEAD", "git -C a push origin @", "cd a && git push",
+      'git -C a push -u origin "$(git branch --show-current)"', "git -C c push origin main", "git -C $X push", "(cd c) && git push",
+      'cd c && git push -o "`cd ..`"', "if true; then cd c; fi; git push", "command cd c; git push",
+      "git --git-dir=c/.git --work-tree=c push", "GIT_DIR=c/.git git push", "export GIT_DIR=c/.git; git push", "git -C c -C . push",
+      "bash <<'EOF'\ncd c\ngit push\nEOF",
+    ]) {
       assert.ok(!allowed(ws, command), command);
     }
-    for (const command of ["git -C a push", "cd a && git push -u origin feature/7-across", "git push"]) {
+    assert.ok(!allowed(child("a"), "git push"), "from inside a member too");
+    for (const command of ["git -C a push -u origin feature/7-across", "cd a && git push -u origin feature/7-across", "git push origin feature/7-across"]) {
       assert.ok(allowed(ws, command), command);
+    }
+    assert.ok(allowed(child("a"), "git push -u origin feature/7-across"), "from inside a member");
+    // A member's own default branch is protected too, whatever its name.
+    git(child("a"), "update-ref", "refs/remotes/origin/trunk", "HEAD");
+    git(child("a"), "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk");
+    try {
+      assert.ok(!allowed(ws, "git -C a push origin trunk"), "a's default branch");
+      assert.ok(!allowed(child("b"), "git push origin feature/7-across:trunk"), "from another member");
+    } finally {
+      git(child("a"), "symbolic-ref", "--delete", "refs/remotes/origin/HEAD");
+      git(child("a"), "update-ref", "-d", "refs/remotes/origin/trunk");
     }
   });
 
@@ -550,7 +629,7 @@ describe("verification gate in a workspace", { skip: process.platform === "win32
     const check = gate(ws, ["check"]);
     assert.notEqual(check.code, 0);
     assert.match(check.out, /now names a, b, c, but the latest verdict covers a, b/);
-    assert.ok(!allowed(ws, "cd a && gh pr create --title t"));
+    assert.ok(!allowed(child("a"), "gh pr create --title t"));
     assert.equal(gate(ws, ["workspace", "set", "a", "b"]).code, 0);
   });
 

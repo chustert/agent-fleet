@@ -6,7 +6,7 @@ import path from "node:path";
 import { describe, test } from "node:test";
 import * as checks from "../lib/check-skills.mjs";
 import { agentNames, desiredFiles, ROOT, skillNames } from "../lib/install.mjs";
-import { configuredCommand, protectedPaths } from "../lib/second-opinion.mjs";
+import { configuredCommand, patternsInMember, protectedPaths } from "../lib/second-opinion.mjs";
 
 const AGENTS = agentNames();
 const read = (relative) => fs.readFileSync(path.join(ROOT, relative), "utf8");
@@ -253,6 +253,16 @@ describe("second opinion", () => {
       assert.doesNotMatch(patch, /hunter2|K=1/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a workspace's protected paths are translated into each member", () => {
+    assert.deepEqual(patternsInMember("app/config/secrets.yml", "app"), ["config/secrets.yml"]);
+    assert.deepEqual(patternsInMember("*/Signing.local", "app"), ["Signing.local"]);
+    assert.deepEqual(patternsInMember("other/x", "app"), []);
+    // A pattern that matches the member itself protects every file in it; before, it protected none.
+    for (const pattern of ["vendor/*", "vendor/**", "vendor/keys", "**"]) {
+      assert.deepEqual(patternsInMember(pattern, "vendor/keys"), ["**"], pattern);
     }
   });
 

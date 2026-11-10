@@ -126,15 +126,16 @@ in this order, and stop at the first check that fails:
 
 In a workspace of several repositories, run the checks from the workspace
 root, where they cover every repository of the change. Commit in each
-repository that has a change before the committed check, push each branch,
-then create each pull request from inside its repository, such as
-`cd <repository> && gh pr create …`. The gate follows that one form of
-directory change, a single leading `cd <path> &&`, and refuses a command line
-that changes directory or repository any other way. It reads heredoc bodies
-as commands, so pass the pull request body in a file with `--body-file`, as
-`prepare-pr` does. It also refuses a ready
-pull request in any repository of the change while any of them differs from
-what was verified.
+repository that has a change before the committed check. Push each branch by
+name, such as `git -C <repository> push -u origin <branch>`: in a workspace,
+the gate refuses a push that names no branch. Create each pull request from
+the workspace root with `gh pr create --repo <owner>/<name> --head <branch> …`,
+or from inside its repository after running `cd <repository>` as a command of
+its own. The gate refuses a pull request command on a line that changes into
+another repository, because it would judge the wrong one. It reads heredoc
+bodies as commands, so pass the pull request body in a file with
+`--body-file`, as `prepare-pr` does. It also refuses a ready pull request in
+any repository of the change while any of them differs from what was verified.
 
 When a check fails, or the gate's hook refuses `gh pr create` or
 `gh pr ready`, the code changed after verification, something verified is

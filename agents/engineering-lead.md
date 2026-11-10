@@ -168,8 +168,9 @@ the packet's actions all fall inside that list and
 authorization, then carry out Stage 2 in this order: commit,
 `node .agents/scripts/gate.mjs check --committed`, push, create the PR. In a
 workspace, commit in every repository of the change before that check, which
-runs from the workspace root and covers them all, then push each branch and
-create each PR from inside its repository, as `cd <repository> && gh pr create`.
+runs from the workspace root and covers them all, then push each branch by
+name, as `git -C <repository> push -u origin <branch>`, and create each PR with
+`gh pr create --repo <owner>/<name> --head <branch>` from the workspace root.
 Any action outside the list goes to the user first. Put the verdict, its proof levels and the evidence summary in the
 PR's `Verification` section, and the checks only a person can run under
 `How to test practically`.
