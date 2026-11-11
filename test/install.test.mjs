@@ -781,8 +781,9 @@ describe("workspace members", () => {
 
   test("a worktree kept inside its own repository is not a member of it", async () => {
     await installed(member);
-    const git = (...args) => spawnSync("git", ["-C", member, "-c", "user.email=t@example.com", "-c", "user.name=t", ...args],
-      { encoding: "utf8" });
+    // Without core.autocrlf, a Windows checkout keeps the installed files' line endings, which their hashes cover.
+    const git = (...args) => spawnSync("git", ["-C", member, "-c", "user.email=t@example.com", "-c", "user.name=t",
+      "-c", "core.autocrlf=false", ...args], { encoding: "utf8" });
     git("add", "-A");
     git("commit", "-qm", "install");
     const worktree = path.join(member, ".claude/worktrees/feat");
@@ -878,8 +879,9 @@ describe("workspace members", () => {
   test("a worktree kept inside a member records the member's path", async () => {
     await installed(workspace);
     await installed(member);
-    const git = (...args) => spawnSync("git", ["-C", member, "-c", "user.email=t@example.com", "-c", "user.name=t", ...args],
-      { encoding: "utf8" });
+    // Without core.autocrlf, a Windows checkout keeps the installed files' line endings, which their hashes cover.
+    const git = (...args) => spawnSync("git", ["-C", member, "-c", "user.email=t@example.com", "-c", "user.name=t",
+      "-c", "core.autocrlf=false", ...args], { encoding: "utf8" });
     write(member, ".gitignore", ".claude/worktrees/\n");
     git("add", "-A");
     git("commit", "-qm", "install");
