@@ -284,6 +284,12 @@ describe("second opinion", () => {
     for (const pattern of ["vendor/*", "vendor/**", "vendor/keys", "**"]) {
       assert.deepEqual(patternsInMember(pattern, "vendor/keys"), ["**"], pattern);
     }
+    // So does a pattern for a folder around the member.
+    for (const pattern of ["vendor", "vendor/", "vendor/keys/", "*"]) {
+      assert.deepEqual(patternsInMember(pattern, "vendor/keys/plugin"), ["**"], pattern);
+    }
+    // Folder names match in any case, as the patch's exclusions do.
+    assert.deepEqual(patternsInMember("app/config/secrets.yml", "App"), ["config/secrets.yml"]);
   });
 
   test("a workspace member without a profile of its own uses the workspace's", { skip: process.platform === "win32" }, () => {
@@ -520,6 +526,47 @@ describe("second opinion", () => {
       const { patch } = secondOpinion(dir, base, worktree);
       assert.match(patch, /\+worktree change/);
       assert.doesNotMatch(patch, /swordfish/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a protected folder around a repository, and a protected path in another case, stay out of the patch", { skip: process.platform === "win32" }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-so-case-"));
+    try {
+      const git = (cwd, ...args) => spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { cwd, encoding: "utf8" });
+      const ws = path.join(dir, "ws");
+      const app = path.join(ws, "App");
+      const lib = path.join(ws, "vendor", "lib");
+      for (const repo of [ws, app, lib]) {
+        fs.mkdirSync(repo, { recursive: true });
+        spawnSync("git", ["init", "-q", "-b", "main", repo]);
+      }
+      const fake = path.join(dir, "fake-reviewer.mjs");
+      fs.writeFileSync(fake, "import fs from 'node:fs';\nfs.writeFileSync(process.env.OUT, 'REVIEW\\n');\n");
+      install(ws);
+      fs.mkdirSync(path.join(ws, "docs/agents"), { recursive: true });
+      fs.writeFileSync(path.join(ws, "docs/agents/autonomy.md"), `| Command | \`node ${fake}\` |\n`);
+      // The profile names the member's folder and file in lower case, and protects the whole vendor folder.
+      fs.writeFileSync(path.join(ws, "docs/agents/verification.md"), "## Protected files\n\n- `app/config/private.txt`\n- `vendor/`\n");
+      fs.writeFileSync(path.join(ws, ".gitignore"), "/App/\n/vendor/\n");
+      const changed = (repo, file, marker) => {
+        fs.writeFileSync(path.join(repo, "a.txt"), "base\n");
+        git(repo, "add", ".");
+        git(repo, "commit", "-qm", "init");
+        const base = git(repo, "rev-parse", "HEAD").stdout.trim();
+        fs.appendFileSync(path.join(repo, "a.txt"), "change\n");
+        fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
+        fs.writeFileSync(path.join(repo, file), `${marker}\n`);
+        return base;
+      };
+      // Every file of a repository inside the protected folder stays out, so its patch is empty.
+      const nested = secondOpinion(dir, changed(lib, "keys/token.txt", "s3cret"), lib);
+      assert.match(nested.stdout, /SECOND_OPINION_UNAVAILABLE: the patch from \w+ is empty/);
+      assert.doesNotMatch(nested.patch, /s3cret/);
+      const member = secondOpinion(dir, changed(app, "Config/Private.txt", "hunter2"), app);
+      assert.match(member.patch, /\+change/);
+      assert.doesNotMatch(member.patch, /hunter2/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

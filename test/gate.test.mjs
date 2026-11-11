@@ -204,6 +204,21 @@ describe("verification gate", { skip: process.platform === "win32" }, () => {
     fs.rmSync(path.join(repo, "creds.pem"));
   });
 
+  test("--exclude leaves a file out in any case, so naming it in another case doesn't get it past", () => {
+    fs.appendFileSync(path.join(repo, "a.txt"), "case change\n");
+    fs.mkdirSync(path.join(repo, "Config"));
+    fs.writeFileSync(path.join(repo, "Config/Secrets.yml"), "pw: hunter2\n");
+    try {
+      // Before, the exclusion compared case exactly and the file went into the patch.
+      const patch = gate(repo, ["diff", "--exclude", "config/secrets.yml"]).out;
+      assert.match(patch, /\+case change/);
+      assert.doesNotMatch(patch, /hunter2/);
+      assert.match(gate(repo, ["diff"]).out, /hunter2/, "without --exclude the file is in the patch");
+    } finally {
+      fs.rmSync(path.join(repo, "Config"), { recursive: true, force: true });
+    }
+  });
+
   test("whitespace changes the fingerprint", () => {
     const before = fingerprintOf(repo);
     const file = path.join(repo, "m.py");
