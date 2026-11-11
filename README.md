@@ -52,7 +52,7 @@ bunx @chustert/agent-fleet@latest       # Bun
 
 It first checks GitHub as described [above](#how-it-works-github-issues-on-one-board): the GitHub CLI, its login, the repository, and the board. Then it asks three questions, sets up the board, and copies the fleet into the project so the project stays self-contained for collaborators who never run the installer:
 
-1. **Which coding tools should get skill adapters?** Claude Code, Cursor, and Kiro each read skills from their own folder, so each gets a thin adapter that points at the canonical skill. Codex and OpenCode read `.agents/skills/` directly and need none. Choosing Claude Code also installs [the agent team](#the-agent-team).
+1. **Which coding tools should get skill adapters?** Claude Code, Cursor, and Kiro each read skills from their own folder, so each gets a thin adapter that points at the canonical skill. Codex and OpenCode read `.agents/skills/` directly and need none. Choosing Claude Code also installs [the agent team](#the-agent-team), unless `--no-team` leaves it out or the project is [a member of a workspace](#updates-checks-and-workspaces).
 2. **Create or update `AGENTS.md` and `CLAUDE.md`?** Described below.
 3. **Overwrite the conflicting files?** Asked only when a file the fleet would write already exists and the fleet did not write it, or you changed it since. The answer defaults to no.
 
@@ -68,6 +68,8 @@ Flags answer a single question instead:
 | --- | --- |
 | `--claude`, `--cursor`, `--kiro`, or `--tools claude,cursor` | Choose the tools; `--tools none` writes no adapters |
 | `--instructions`, `--no-instructions` | Create and update `AGENTS.md` and `CLAUDE.md`, or leave both alone |
+| `--team`, `--no-team` | With Claude Code, install the agent team, with its permission rules and the gate's hooks, or leave it all out and install only the skills' adapters. Without either flag, the installer keeps the recorded choice. The first time, it installs the team, except in a member of a workspace |
+| `--workspace`, `--no-workspace` | Install a repository inside an installed workspace as its member, or as a repository of its own. Without either flag, the installer keeps the recorded choice, and makes a repository inside a workspace its member |
 | `--force` | Overwrite conflicting files without asking, and run over an installation made by a newer version |
 | `--board <number or title>` | Use this board of the repository's owner, linking it to the repository. Naming the board approves the link, also without a terminal |
 | `--dry-run` | Show what would change, on GitHub and on disk, and change nothing. Conflicting files and a stop at the board are listed with the rest, and the dry run fails when either would stop the real run |
@@ -86,7 +88,7 @@ The installer writes:
 
 It never changes an existing `docs/agents/` file and writes nothing else there. The profile belongs to the project.
 
-With Claude Code chosen, the installer also writes the agent team:
+With Claude Code chosen, the installer also writes the agent team, unless the installation leaves it out:
 
 - `.claude/agents/`: the eight agent definitions;
 - `.claude/automations/`: optional routine prompts and a GitHub Actions template, described in its `README.md`;
@@ -126,7 +128,18 @@ When `--force`, or a yes to the overwrite question, replaces files the fleet did
 
 After an install or update, the installer lists what `setup-project` still has to do: profile files that are missing, `TODO`s, and settings the templates in `skills/setup-project/templates/` have that the project's profile files lack. It compares the first column of each settings table and the columns of the routing and boundaries tables, so the list names any row or column a newer template added after the profile was written. In `verification.md` it compares each component section on its own. A settings table counts as a component only when it shares a row with the template's component table, and never under a heading the template has, such as `Local stack`. The list names a whole routing or boundaries table when the file has neither the table nor its heading. A heading that records `None`, as in a project without boundaries, is enough.
 
-In a workspace that holds several independent repositories, install at the workspace root, where cross-repository work starts. Install into a child repository as well only if people also open it on its own. Each installation then needs its own profile. The board links to the workspace repository, and issues from every child repository of the same owner can sit on it.
+In a workspace that holds several independent repositories, install at the workspace root, where cross-repository work starts. The board links to the workspace repository, and issues from every child repository of the same owner can sit on it.
+
+Install into a child repository as well when people also open it on its own. Run the installer from the child, or name it, as in `npx @chustert/agent-fleet@latest install <child>`. The installer finds the installed workspace around the child and makes the child a member of it:
+
+- The child gets the skills, adapters, and scripts, but not the agent team, its permission rules, or the gate's hooks, because people who don't use the workflow may commit there. `--team` installs them anyway.
+- It links the workspace's board, when both repositories have the same owner, so issues from every member sit on one board. A child that already has a board linked keeps it, and a child gets a board of its own when the workspace's board is closed.
+- Its `AGENTS.md` section names the workspace. Inside the workspace, each profile file the child lacks comes from the workspace root's `docs/agents/`. So the child needs only the profile files it uses when opened on its own, which `setup-project` writes there.
+- `.agents/agent-fleet.json` records the workspace and the team choice, so an update from a clone of the child on its own keeps both. `--no-workspace` makes the child a repository of its own, with the agent team unless `--no-team` leaves it out, and records that choice. `--workspace` makes it a member again, and `--team` adds the team.
+
+The workspace around a child is the nearest Git repository that contains it and has an agent-fleet installation that is not itself a member. A worktree of the child's own repository, such as one kept inside its main checkout, doesn't count. Inside the workspace, the safety settings of both profiles apply: protected files, services that need approval, and sensitive paths.
+
+The gate's hooks don't run in a member's own sessions. Start issues that span repositories from the workspace root, where they run. To hold every pull request in a member to a verdict, make `agent-fleet/verdict` a required status in that repository, as [How the team verifies](#how-the-team-verifies) describes. Keep both installations on the same version. The installer notes when they differ.
 
 To try an unreleased version, run the installer straight from GitHub with `npx github:chustert/agent-fleet`, or from a clone with `node bin/agent-fleet.mjs install <project>`.
 
@@ -301,6 +314,7 @@ The skills stop at approval gates. `docs/agents/autonomy.md`, which `setup-proje
 - The tracker is GitHub: issues, sub-issues, and a Projects board. Another tracker, such as Jira or Linear, is not supported.
 - The installer and the scripts it copies into projects need Node.js 20 or later and nothing else from npm. The sprint and `repos-report` scripts also need the GitHub CLI, authenticated with the `read:project` scope.
 - Adapters are generated for Claude Code, Cursor, and Kiro. Codex and OpenCode read `.agents/skills/` directly.
+- A member of a workspace has no gate hooks in its own sessions. Only a required `agent-fleet/verdict` status holds its pull requests to a verdict there.
 - The skills report physical-device, target-hardware, and play-test checks as steps for a person to run. They never claim those checks passed on the strength of a build or an editor run.
 - The agent team runs only in Claude Code. On Windows, Claude Code must run hooks in Git Bash, which comes with Git for Windows; in PowerShell the gate's hooks fail without blocking anything, and its wrappers, which are shell scripts, aren't used.
 - Every fix round starts a fresh verifier and reviewer, which costs more than one agent checking its own work; that is the price of independent proof. The gate's fingerprint needs a Git version with `git patch-id --verbatim`.

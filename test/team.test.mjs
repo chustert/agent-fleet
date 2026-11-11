@@ -6,7 +6,27 @@ import path from "node:path";
 import { describe, test } from "node:test";
 import * as checks from "../lib/check-skills.mjs";
 import { agentNames, desiredFiles, ROOT, skillNames } from "../lib/install.mjs";
-import { configuredCommand, patternsInMember, protectedPaths } from "../lib/second-opinion.mjs";
+import { configuredCommand, findWorkspace, patternsInMember, protectedPaths } from "../lib/second-opinion.mjs";
+
+/** Mark a folder as an agent-fleet installation, with the manifest fields the workspace lookup reads. */
+function install(root, fields = {}) {
+  fs.mkdirSync(path.join(root, ".agents"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".agents/agent-fleet.json"), JSON.stringify({ fleet: "agent-fleet", ...fields }));
+}
+
+/** The workspace root findWorkspace() finds around a repository, or null. */
+const workspaceRoot = (root) => findWorkspace(root)?.root ?? null;
+
+/** Run second-opinion.mjs on a repository and return its output and the patch it wrote. */
+function secondOpinion(dir, base, repo) {
+  const out = path.join(dir, "evidence", "second-opinion.md");
+  const result = spawnSync(process.execPath, [path.join(ROOT, "lib/second-opinion.mjs"), base, repo, "https://example.com/1", out],
+    { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  const patchFile = path.join(dir, "evidence", "second-opinion.patch");
+  return { stdout: result.stdout, reply: fs.existsSync(out) ? fs.readFileSync(out, "utf8") : null,
+    patch: fs.existsSync(patchFile) ? fs.readFileSync(patchFile, "utf8") : "" };
+}
 
 const AGENTS = agentNames();
 const read = (relative) => fs.readFileSync(path.join(ROOT, relative), "utf8");
@@ -264,6 +284,12 @@ describe("second opinion", () => {
     for (const pattern of ["vendor/*", "vendor/**", "vendor/keys", "**"]) {
       assert.deepEqual(patternsInMember(pattern, "vendor/keys"), ["**"], pattern);
     }
+    // So does a pattern for a folder around the member.
+    for (const pattern of ["vendor", "vendor/", "vendor/keys/", "*"]) {
+      assert.deepEqual(patternsInMember(pattern, "vendor/keys/plugin"), ["**"], pattern);
+    }
+    // Folder names match in any case, as the patch's exclusions do.
+    assert.deepEqual(patternsInMember("app/config/secrets.yml", "App"), ["config/secrets.yml"]);
   });
 
   test("a workspace member without a profile of its own uses the workspace's", { skip: process.platform === "win32" }, () => {
@@ -281,7 +307,7 @@ describe("second opinion", () => {
       const fake = path.join(dir, "fake-reviewer.mjs");
       fs.writeFileSync(fake, "import fs from 'node:fs';\nfs.writeFileSync(process.env.OUT, 'WORKSPACE REVIEW\\n');\n");
       fs.mkdirSync(path.join(ws, "docs/agents"), { recursive: true });
-      fs.mkdirSync(path.join(ws, ".agents"));
+      install(ws);
       fs.writeFileSync(path.join(ws, "docs/agents/autonomy.md"), `| Command | \`node ${fake}\` |\n`);
       // The workspace profile names the file by its path from the workspace root.
       fs.writeFileSync(path.join(ws, "docs/agents/verification.md"), "## Protected files\n\n- `app/config/secrets.yml`\n- `*/Signing.local`\n");
@@ -313,6 +339,239 @@ describe("second opinion", () => {
     }
   });
 
+  test("a worktree kept inside a member leaves out the workspace's protected files for that member", { skip: process.platform === "win32" }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-so-wt-"));
+    try {
+      const git = (cwd, ...args) => spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { cwd, encoding: "utf8" });
+      const ws = path.join(dir, "ws");
+      const app = path.join(ws, "app");
+      for (const repo of [ws, app]) {
+        fs.mkdirSync(repo, { recursive: true });
+        spawnSync("git", ["init", "-q", "-b", "main", repo]);
+      }
+      const fake = path.join(dir, "fake-reviewer.mjs");
+      fs.writeFileSync(fake, "import fs from 'node:fs';\nfs.writeFileSync(process.env.OUT, 'REVIEW\\n');\n");
+      install(ws);
+      fs.mkdirSync(path.join(ws, "docs/agents"), { recursive: true });
+      fs.writeFileSync(path.join(ws, "docs/agents/autonomy.md"), `| Command | \`node ${fake}\` |\n`);
+      fs.writeFileSync(path.join(ws, "docs/agents/verification.md"), "## Protected files\n\n- `app/config/secrets.yml`\n");
+      fs.writeFileSync(path.join(ws, ".gitignore"), "/app/\n");
+      fs.writeFileSync(path.join(app, ".gitignore"), ".claude/\n");
+      fs.writeFileSync(path.join(app, "a.txt"), "base\n");
+      git(app, "add", ".");
+      git(app, "commit", "-qm", "init");
+      const worktree = path.join(app, ".claude", "worktrees", "w");
+      assert.equal(git(app, "worktree", "add", "-q", "-b", "w", worktree).status, 0);
+      const found = findWorkspace(worktree);
+      assert.equal(fs.realpathSync(found.root), fs.realpathSync(ws));
+      assert.equal(fs.realpathSync(found.member), fs.realpathSync(app));
+      const base = git(worktree, "rev-parse", "HEAD").stdout.trim();
+      fs.appendFileSync(path.join(worktree, "a.txt"), "worktree change\n");
+      fs.mkdirSync(path.join(worktree, "config"));
+      fs.writeFileSync(path.join(worktree, "config/secrets.yml"), "pw: hunter2\n");
+      const out = path.join(dir, "evidence", "second-opinion.md");
+      const result = spawnSync(process.execPath, [path.join(ROOT, "lib/second-opinion.mjs"), base, worktree, "https://example.com/8", out],
+        { encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+      const patch = fs.readFileSync(path.join(dir, "evidence", "second-opinion.patch"), "utf8");
+      assert.match(patch, /\+worktree change/);
+      assert.doesNotMatch(patch, /hunter2/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("only an agent-fleet installation makes a workspace, and a member cloned on its own counts for a repository in it", { skip: process.platform === "win32" }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-so-which-"));
+    try {
+      const ws = path.join(dir, "ws");
+      const app = path.join(ws, "app");
+      const alone = path.join(dir, "alone");
+      const plugin = path.join(alone, "plugin");
+      for (const repo of [ws, app, alone, plugin]) {
+        fs.mkdirSync(repo, { recursive: true });
+        spawnSync("git", ["init", "-q", "-b", "main", repo]);
+      }
+      // A .agents folder is how several coding tools find skills, so it alone is no installation.
+      fs.mkdirSync(path.join(ws, ".agents/skills/mine"), { recursive: true });
+      fs.writeFileSync(path.join(ws, ".agents/skills/mine/SKILL.md"), "---\nname: mine\ndescription: Mine.\n---\n");
+      assert.equal(workspaceRoot(app), null);
+      install(ws);
+      assert.equal(fs.realpathSync(workspaceRoot(app)), fs.realpathSync(ws));
+      assert.equal(findWorkspace(app).alone, false);
+      install(alone, { workspace: { repository: "acme/ws", path: "alone" } });
+      assert.equal(fs.realpathSync(workspaceRoot(plugin)), fs.realpathSync(alone));
+      // Its profile applies, but the installer doesn't make the repository a member of a member.
+      assert.equal(findWorkspace(plugin).alone, true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a repository installed on its own inside a workspace doesn't use the workspace's profile", { skip: process.platform === "win32" }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-so-alone-"));
+    try {
+      const git = (cwd, ...args) => spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { cwd, encoding: "utf8" });
+      const ws = path.join(dir, "ws");
+      const app = path.join(ws, "app");
+      for (const repo of [ws, app]) {
+        fs.mkdirSync(repo, { recursive: true });
+        spawnSync("git", ["init", "-q", "-b", "main", repo]);
+      }
+      install(ws);
+      fs.mkdirSync(path.join(ws, "docs/agents"), { recursive: true });
+      fs.writeFileSync(path.join(ws, "docs/agents/autonomy.md"), "| Command | `node ./reviewer.mjs` |\n");
+      install(app, { workspace: false });
+      fs.writeFileSync(path.join(app, "a.txt"), "base\n");
+      git(app, "add", ".");
+      git(app, "commit", "-qm", "init");
+      const base = git(app, "rev-parse", "HEAD").stdout.trim();
+      fs.appendFileSync(path.join(app, "a.txt"), "change\n");
+      const result = spawnSync(process.execPath, [path.join(ROOT, "lib/second-opinion.mjs"), base, app, "https://example.com/9",
+        path.join(dir, "evidence", "out.md")], { encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /SECOND_OPINION_UNAVAILABLE: no Command/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the workspace root skips an installed member around a repository and a worktree of the repository itself", { skip: process.platform === "win32" }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-so-root-"));
+    try {
+      const git = (cwd, ...args) => spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { cwd, encoding: "utf8" });
+      const ws = path.join(dir, "ws");
+      const member = path.join(ws, "a");
+      const nested = path.join(member, "sub");
+      for (const repo of [ws, member, nested]) {
+        fs.mkdirSync(repo, { recursive: true });
+        spawnSync("git", ["init", "-q", "-b", "main", repo]);
+      }
+      install(ws);
+      install(member, { workspace: { repository: "acme/ws", path: "a" } });
+      const real = (p) => fs.realpathSync(p);
+      assert.equal(real(workspaceRoot(nested)), real(ws));
+      assert.equal(real(workspaceRoot(member)), real(ws));
+      assert.equal(workspaceRoot(ws), null);
+      // A worktree kept inside its own main checkout belongs to that repository, not to a workspace around it.
+      fs.writeFileSync(path.join(ws, ".gitignore"), "/a/\n.claude/\n");
+      git(ws, "add", ".gitignore");
+      git(ws, "commit", "-qm", "init");
+      const worktree = path.join(ws, ".claude", "worktrees", "w");
+      assert.equal(git(ws, "worktree", "add", "-q", "-b", "w", worktree).status, 0);
+      assert.equal(workspaceRoot(worktree), null);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a repository installed on its own inside a workspace still leaves out the workspace's protected files", { skip: process.platform === "win32" }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-so-alone-safe-"));
+    try {
+      const git = (cwd, ...args) => spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { cwd, encoding: "utf8" });
+      const ws = path.join(dir, "ws");
+      const app = path.join(ws, "app");
+      for (const repo of [ws, app]) {
+        fs.mkdirSync(repo, { recursive: true });
+        spawnSync("git", ["init", "-q", "-b", "main", repo]);
+      }
+      install(ws);
+      fs.mkdirSync(path.join(ws, "docs/agents"), { recursive: true });
+      fs.writeFileSync(path.join(ws, "docs/agents/verification.md"), "## Protected files\n\n- `app/config/secrets.yml`\n");
+      install(app, { workspace: false });
+      const fake = path.join(dir, "fake-reviewer.mjs");
+      fs.writeFileSync(fake, "import fs from 'node:fs';\nfs.writeFileSync(process.env.OUT, 'OWN REVIEW\\n');\n");
+      fs.mkdirSync(path.join(app, "docs/agents"), { recursive: true });
+      fs.writeFileSync(path.join(app, "docs/agents/autonomy.md"), `| Command | \`node ${fake}\` |\n`);
+      fs.writeFileSync(path.join(app, "a.txt"), "base\n");
+      git(app, "add", ".");
+      git(app, "commit", "-qm", "init");
+      const base = git(app, "rev-parse", "HEAD").stdout.trim();
+      fs.appendFileSync(path.join(app, "a.txt"), "change\n");
+      fs.mkdirSync(path.join(app, "config"));
+      fs.writeFileSync(path.join(app, "config/secrets.yml"), "pw: hunter2\n");
+      const { reply, patch } = secondOpinion(dir, base, app);
+      assert.equal(reply, "OWN REVIEW\n");
+      assert.match(patch, /\+change/);
+      assert.doesNotMatch(patch, /hunter2/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a worktree kept inside its main checkout leaves out the files that checkout's profile protects", { skip: process.platform === "win32" }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-so-main-"));
+    try {
+      const git = (cwd, ...args) => spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { cwd, encoding: "utf8" });
+      const app = path.join(dir, "app");
+      fs.mkdirSync(app, { recursive: true });
+      spawnSync("git", ["init", "-q", "-b", "main", app]);
+      install(app);
+      const fake = path.join(dir, "fake-reviewer.mjs");
+      fs.writeFileSync(fake, "import fs from 'node:fs';\nfs.writeFileSync(process.env.OUT, 'REVIEW\\n');\n");
+      fs.mkdirSync(path.join(app, "docs/agents"), { recursive: true });
+      fs.writeFileSync(path.join(app, "docs/agents/autonomy.md"), `| Command | \`node ${fake}\` |\n`);
+      fs.writeFileSync(path.join(app, ".gitignore"), ".claude/\n");
+      fs.writeFileSync(path.join(app, "a.txt"), "base\n");
+      git(app, "add", ".");
+      git(app, "commit", "-qm", "init");
+      // The main checkout's profile protects a file that the worktree's commit doesn't list yet.
+      fs.writeFileSync(path.join(app, "docs/agents/verification.md"), "## Protected files\n\n- `config/prod.yml`\n");
+      const worktree = path.join(app, ".claude", "worktrees", "w");
+      assert.equal(git(app, "worktree", "add", "-q", "-b", "w", worktree).status, 0);
+      const base = git(worktree, "rev-parse", "HEAD").stdout.trim();
+      fs.appendFileSync(path.join(worktree, "a.txt"), "worktree change\n");
+      fs.mkdirSync(path.join(worktree, "config"));
+      fs.writeFileSync(path.join(worktree, "config/prod.yml"), "db: swordfish\n");
+      const { patch } = secondOpinion(dir, base, worktree);
+      assert.match(patch, /\+worktree change/);
+      assert.doesNotMatch(patch, /swordfish/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a protected folder around a repository, and a protected path in another case, stay out of the patch", { skip: process.platform === "win32" }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-so-case-"));
+    try {
+      const git = (cwd, ...args) => spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], { cwd, encoding: "utf8" });
+      const ws = path.join(dir, "ws");
+      const app = path.join(ws, "App");
+      const lib = path.join(ws, "vendor", "lib");
+      for (const repo of [ws, app, lib]) {
+        fs.mkdirSync(repo, { recursive: true });
+        spawnSync("git", ["init", "-q", "-b", "main", repo]);
+      }
+      const fake = path.join(dir, "fake-reviewer.mjs");
+      fs.writeFileSync(fake, "import fs from 'node:fs';\nfs.writeFileSync(process.env.OUT, 'REVIEW\\n');\n");
+      install(ws);
+      fs.mkdirSync(path.join(ws, "docs/agents"), { recursive: true });
+      fs.writeFileSync(path.join(ws, "docs/agents/autonomy.md"), `| Command | \`node ${fake}\` |\n`);
+      // The profile names the member's folder and file in lower case, and protects the whole vendor folder.
+      fs.writeFileSync(path.join(ws, "docs/agents/verification.md"), "## Protected files\n\n- `app/config/private.txt`\n- `vendor/`\n");
+      fs.writeFileSync(path.join(ws, ".gitignore"), "/App/\n/vendor/\n");
+      const changed = (repo, file, marker) => {
+        fs.writeFileSync(path.join(repo, "a.txt"), "base\n");
+        git(repo, "add", ".");
+        git(repo, "commit", "-qm", "init");
+        const base = git(repo, "rev-parse", "HEAD").stdout.trim();
+        fs.appendFileSync(path.join(repo, "a.txt"), "change\n");
+        fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
+        fs.writeFileSync(path.join(repo, file), `${marker}\n`);
+        return base;
+      };
+      // Every file of a repository inside the protected folder stays out, so its patch is empty.
+      const nested = secondOpinion(dir, changed(lib, "keys/token.txt", "s3cret"), lib);
+      assert.match(nested.stdout, /SECOND_OPINION_UNAVAILABLE: the patch from \w+ is empty/);
+      assert.doesNotMatch(nested.patch, /s3cret/);
+      const member = secondOpinion(dir, changed(app, "Config/Private.txt", "hunter2"), app);
+      assert.match(member.patch, /\+change/);
+      assert.doesNotMatch(member.patch, /hunter2/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a member nested in another member finds the workspace's profile and runs its command from there", { skip: process.platform === "win32" }, () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-fleet-so-nested-"));
     try {
@@ -329,10 +588,14 @@ describe("second opinion", () => {
       // The command is a path relative to the workspace root, where it is installed.
       fs.writeFileSync(path.join(ws, "reviewer.mjs"), "import fs from 'node:fs';\nfs.writeFileSync(process.env.OUT, 'NESTED REVIEW\\n');\n");
       fs.mkdirSync(path.join(ws, "docs/agents"), { recursive: true });
-      fs.mkdirSync(path.join(ws, ".agents"));
+      install(ws);
       fs.writeFileSync(path.join(ws, "docs/agents/autonomy.md"), "| Command | `node ./reviewer.mjs` |\n");
       fs.writeFileSync(path.join(ws, "docs/agents/verification.md"), "## Protected files\n\n- `a/sub/config/secrets.yml`\n");
       fs.writeFileSync(path.join(outer, ".gitignore"), "/sub/\n");
+      // The member around it protects a file of its own, which stays out of the patch too.
+      install(outer, { workspace: { repository: "acme/ws", path: "a" } });
+      fs.mkdirSync(path.join(outer, "docs/agents"), { recursive: true });
+      fs.writeFileSync(path.join(outer, "docs/agents/verification.md"), "## Protected files\n\n- `sub/keys/token.txt`\n");
       fs.writeFileSync(path.join(sub, "s.txt"), "base\n");
       git(sub, "add", ".");
       git(sub, "commit", "-qm", "init");
@@ -340,15 +603,13 @@ describe("second opinion", () => {
       fs.appendFileSync(path.join(sub, "s.txt"), "nested change\n");
       fs.mkdirSync(path.join(sub, "config"));
       fs.writeFileSync(path.join(sub, "config/secrets.yml"), "pw: hunter2\n");
-      const out = path.join(dir, "evidence", "second-opinion.md");
-      const result = spawnSync(process.execPath, [path.join(ROOT, "lib/second-opinion.mjs"), base, sub, "https://example.com/7", out],
-        { encoding: "utf8" });
-      assert.equal(result.status, 0, result.stderr);
-      assert.match(result.stdout, /Second opinion written/);
-      assert.equal(fs.readFileSync(out, "utf8"), "NESTED REVIEW\n");
-      const patch = fs.readFileSync(path.join(dir, "evidence", "second-opinion.patch"), "utf8");
+      fs.mkdirSync(path.join(sub, "keys"));
+      fs.writeFileSync(path.join(sub, "keys/token.txt"), "s3cret\n");
+      const { stdout, reply, patch } = secondOpinion(dir, base, sub);
+      assert.match(stdout, /Second opinion written/);
+      assert.equal(reply, "NESTED REVIEW\n");
       assert.match(patch, /\+nested change/);
-      assert.doesNotMatch(patch, /hunter2/);
+      assert.doesNotMatch(patch, /hunter2|s3cret/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
