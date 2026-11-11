@@ -54,6 +54,29 @@ repository it is the repository root. In a coordination workspace that holds
 several independent repositories, it is the workspace root, and each child
 repository keeps its own Git history.
 
+A child repository can have an installation of its own, as a member of the
+workspace, so that it also works when opened on its own. Its `AGENTS.md`
+section names the workspace, and `.agents/agent-fleet.json` records it. The
+workspace root is the nearest Git repository around the member whose
+`.agents/agent-fleet.json` doesn't record a workspace of its own. A
+worktree of the member's own repository doesn't count.
+
+When the workspace is checked out around a member:
+
+- Read each profile file from the member's `docs/agents/`. When the member
+  has no such file, read the workspace root's instead.
+- The safety settings in `docs/agents/verification.md` of both apply, even
+  when the member has a file of its own: the protected files, the online and
+  paid services that need approval, and the sensitive paths with their minimum
+  tiers.
+- Paths and commands in a workspace profile file are written from the
+  workspace root. Run such a command from there, and read such a path from
+  there.
+- A workspace and its members count as one project for rule 5 below.
+
+Cloned on its own, a member has only its own profile, and so does a
+repository whose `.agents/agent-fleet.json` records `"workspace": false`.
+
 | File | Owned by | Holds |
 | --- | --- | --- |
 | `AGENTS.md` | project, except one section | Always-relevant instructions, working rules, and safety rules. The profile does not restate it. The fleet installer creates it when missing and maintains only the section between the `agent-fleet:begin` and `agent-fleet:end` markers. |

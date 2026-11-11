@@ -485,6 +485,441 @@ describe("agent team", () => {
   });
 });
 
+describe("leaving the agent team out", () => {
+  let dir;
+  let project;
+  beforeEach(() => ({ dir, project } = tempProject()));
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const install = (...argv) => run(["install", project, "--yes", ...argv]);
+  const manifest = () => JSON.parse(read(project, checks.MANIFEST));
+
+  test("--no-team installs Claude Code's adapters without the team, and an update keeps that", async () => {
+    const { code, output } = await install("--no-team");
+    assert.equal(code, 0, output);
+    assert.ok(exists(project, ".claude/skills/tdd/SKILL.md"));
+    for (const team of [".claude/agents", ".claude/automations", ".claude/agent-memory-local", ".claude/settings.json"]) {
+      assert.equal(exists(project, team), false, team);
+    }
+    assert.ok(exists(project, ".agents/scripts/gate.mjs"));
+    assert.equal(manifest().team, false);
+    assert.equal(manifest().settings, undefined);
+    const block = checks.findBlock(read(project, "AGENTS.md"));
+    assert.doesNotMatch(block, /engineering-lead/);
+    assert.match(block, /import in `CLAUDE\.md`/);
+    assert.match(output, /without the agent team, its permission rules, or the gate's hooks/);
+    assert.deepEqual(checks.check(project), []);
+
+    const again = await install();
+    assert.equal(again.code, 0, again.output);
+    assert.match(again.output, /: \d+ unchanged\./);
+    assert.equal(exists(project, ".claude/agents"), false);
+    assert.equal(manifest().team, false);
+  });
+
+  test("--team brings the team back, and --no-team removes only what it added", async () => {
+    write(project, ".claude/settings.json", JSON.stringify({ permissions: { allow: ["Bash(npm test)"] } }, null, 2));
+    assert.equal((await install("--no-team")).code, 0);
+    assert.deepEqual(JSON.parse(read(project, ".claude/settings.json")), { permissions: { allow: ["Bash(npm test)"] } });
+
+    const added = await install("--team");
+    assert.equal(added.code, 0, added.output);
+    assert.ok(exists(project, ".claude/agents/engineering-lead.md"));
+    assert.match(read(project, ".claude/settings.json"), /gate\.mjs hook bash-guard/);
+    assert.equal(manifest().team, true);
+    assert.match(checks.findBlock(read(project, "AGENTS.md")), /claude --agent engineering-lead/);
+
+    write(project, ".claude/agent-memory-local/verifier/MEMORY.md", "notes\n");
+    const removed = await install("--no-team");
+    assert.equal(removed.code, 0, removed.output);
+    assert.equal(exists(project, ".claude/agents"), false);
+    assert.equal(exists(project, ".claude/automations"), false);
+    assert.deepEqual(JSON.parse(read(project, ".claude/settings.json")), { permissions: { allow: ["Bash(npm test)"] } });
+    assert.match(removed.output, /agent-memory-local\/ still holds/);
+    assert.deepEqual(checks.check(project), []);
+  });
+
+  test("leaving the team out and bringing it back keeps an entry removed by hand out", async () => {
+    await install();
+    const edited = JSON.parse(read(project, ".claude/settings.json"));
+    edited.hooks.SubagentStop = [];
+    write(project, ".claude/settings.json", JSON.stringify(edited, null, 2));
+    await install();
+    assert.equal((await install("--no-team")).code, 0);
+    assert.ok(manifest().settings.removed.some((key) => key.startsWith("hooks.SubagentStop")));
+    const back = await install("--team");
+    assert.equal(back.code, 0, back.output);
+    assert.doesNotMatch(read(project, ".claude/settings.json"), /verifier-stop/);
+    assert.match(back.output, /removed by hand, so they stay out/);
+  });
+
+  test("--no-team records an entry removed by hand since the last run, so --team leaves it out", async () => {
+    await install();
+    const edited = JSON.parse(read(project, ".claude/settings.json"));
+    edited.hooks.SubagentStop = [];
+    write(project, ".claude/settings.json", JSON.stringify(edited, null, 2));
+    assert.equal((await install("--no-team")).code, 0);
+    assert.ok(manifest().settings.removed.some((key) => key.startsWith("hooks.SubagentStop")));
+    const back = await install("--team");
+    assert.equal(back.code, 0, back.output);
+    assert.doesNotMatch(read(project, ".claude/settings.json"), /verifier-stop/);
+    assert.match(read(project, ".claude/settings.json"), /gate\.mjs hook bash-guard/);
+  });
+
+  test("--team without Claude Code says it has no effect", async () => {
+    const { code, output } = await install("--cursor", "--team");
+    assert.equal(code, 0, output);
+    assert.equal(exists(project, ".claude"), false);
+    assert.match(output, /The agent team comes only with Claude Code/);
+    assert.equal(manifest().team, true);
+  });
+
+  test("--no-team without Claude Code still holds when Claude Code comes later", async () => {
+    assert.equal((await install("--cursor", "--no-team")).code, 0);
+    assert.equal(manifest().team, false);
+    const { code, output } = await install("--claude");
+    assert.equal(code, 0, output);
+    assert.ok(exists(project, ".claude/skills/tdd/SKILL.md"));
+    assert.equal(exists(project, ".claude/agents"), false);
+    assert.match(output, /without the agent team/);
+    const again = await install();
+    assert.doesNotMatch(again.output, /without the agent team/);
+  });
+
+  test("the team flags are install options", () => {
+    assert.equal(parseArgs(["update", "--no-team"]).team, false);
+    assert.equal(parseArgs(["--team"]).team, true);
+    assert.throws(() => parseArgs(["check", "--team"]), UsageError);
+  });
+});
+
+describe("workspace members", () => {
+  let dir;
+  let workspace;
+  let member;
+  let github;
+  beforeEach(async () => {
+    ({ dir, project: workspace } = tempProject("ws"));
+    write(workspace, ".gitignore", "/app/\n");
+    member = path.join(workspace, "app");
+    spawnSync("git", ["init", "-q", member]);
+    spawnSync("git", ["-C", member, "remote", "add", "origin", "https://github.com/acme/app.git"]);
+    github = new FakeGitHub();
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const installed = async (project, ...argv) => {
+    const result = await run(["install", project, "--yes", ...argv], { github });
+    assert.equal(result.code, 0, result.output);
+    return result;
+  };
+  const manifestOf = (project) => JSON.parse(read(project, checks.MANIFEST));
+  const workspaceBoard = () => github.boards.find((b) => b.title === "ws Sprints");
+
+  test("a repository inside an installed workspace gets the skills without the team, and the workspace's board", async () => {
+    await installed(workspace);
+    const { output } = await installed(member);
+    assert.match(output, /Workspace member:/);
+    assert.ok(exists(member, ".claude/skills/tdd/SKILL.md"));
+    assert.ok(exists(member, ".cursor/skills/tdd/SKILL.md"));
+    assert.equal(exists(member, ".claude/agents"), false);
+    assert.equal(exists(member, ".claude/settings.json"), false);
+    const manifest = manifestOf(member);
+    assert.equal(manifest.team, false);
+    assert.deepEqual(manifest.workspace, { repository: "acme/ws", path: "app" });
+    assert.equal(github.boards.length, 1);
+    assert.ok(github.repo("acme/app").linked.has(workspaceBoard().id));
+    assert.equal(manifest.github.board.number, workspaceBoard().number);
+    assert.match(read(member, "docs/agents/issue-tracker.md"), /`acme\/app`\. A bare issue number/);
+    assert.ok(read(member, "docs/agents/issue-tracker.md").includes(workspaceBoard().url));
+    const block = checks.findBlock(read(member, "AGENTS.md"));
+    assert.match(block, /member of the agent-fleet workspace `acme\/ws`, which holds it at `app\/`/);
+    assert.match(block, /comes from the workspace root's `docs\/agents\/`/);
+    assert.match(block, /the protected files, services that need approval, and sensitive paths in the workspace's `docs\/agents\/verification\.md` apply here too/);
+    assert.doesNotMatch(block, /engineering-lead/);
+    assert.match(output, /to work in this repository on its own, open it in your coding agent/);
+    assert.deepEqual(checks.check(member), []);
+    // The workspace's own installation is untouched.
+    assert.equal(manifestOf(workspace).workspace, undefined);
+    assert.ok(exists(workspace, ".claude/agents/engineering-lead.md"));
+  });
+
+  test("a dry run in a member plans to link the workspace's board", async () => {
+    await installed(workspace);
+    const preview = await run(["install", member, "--dry-run"], { github });
+    assert.equal(preview.code, 0, preview.output);
+    assert.match(preview.output, /The workspace's board, #1 "ws Sprints", is not linked to acme\/app yet\./);
+    assert.match(preview.output, /would link the project board "ws Sprints" to acme\/app/);
+    assert.doesNotMatch(preview.output, /would create the project board/);
+    assert.doesNotMatch(preview.output, /would create \.claude\/agents/);
+  });
+
+  test("asked in a terminal, the member is offered the workspace's board first", async () => {
+    await installed(workspace);
+    const { code, output, asked } = await run(["install", member, "--no-instructions", "--cursor"],
+      { github, interactive: true });
+    assert.equal(code, 0, output);
+    assert.ok(asked.some((q) => q.startsWith("No project board is linked to acme/app")));
+    assert.ok(github.repo("acme/app").linked.has(workspaceBoard().id));
+    assert.equal(github.boards.length, 1);
+  });
+
+  test("a member that has a board of its own keeps it", async () => {
+    await installed(workspace);
+    const own = github.addBoard({ title: "App board", linkedTo: "acme/app",
+      statuses: ["Todo", "In progress", "In review", "Done"], iteration: "Sprint" });
+    const { output } = await installed(member);
+    assert.match(output, /acme\/app keeps its own board "App board", not the workspace's board #1\. To use the workspace's board, rerun with --board 1\./);
+    assert.equal(manifestOf(member).github.board.number, own.number);
+    assert.equal(github.repo("acme/app").linked.has(workspaceBoard().id), false);
+  });
+
+  test("a workspace board recorded without its owner belongs to the workspace repository's owner", async () => {
+    await installed(workspace);
+    const manifest = manifestOf(workspace);
+    delete manifest.github.board.owner;
+    write(workspace, checks.MANIFEST, JSON.stringify(manifest, null, 2));
+    spawnSync("git", ["-C", workspace, "remote", "set-url", "origin", "https://github.com/other/ws.git"]);
+    const { output } = await installed(member);
+    assert.match(output, /The workspace's board, #1, belongs to other/);
+    assert.deepEqual(github.boards.map((b) => b.title), ["ws Sprints", "app Sprints"]);
+  });
+
+  test("a board owner from the workspace's remote ignores case", async () => {
+    await installed(workspace);
+    const manifest = manifestOf(workspace);
+    delete manifest.github.board.owner;
+    write(workspace, checks.MANIFEST, JSON.stringify(manifest, null, 2));
+    spawnSync("git", ["-C", workspace, "remote", "set-url", "origin", "https://github.com/Acme/ws.git"]);
+    const { output } = await installed(member);
+    assert.doesNotMatch(output, /belongs to/);
+    assert.ok(github.repo("acme/app").linked.has(workspaceBoard().id));
+    assert.equal(github.boards.length, 1);
+  });
+
+  test("a member with several boards of its own is offered the workspace's board too", async () => {
+    await installed(workspace);
+    for (const title of ["One", "Two"]) {
+      github.addBoard({ title, linkedTo: "acme/app", statuses: ["Todo", "In progress", "In review", "Done"], iteration: "Sprint" });
+    }
+    const refused = await run(["install", member, "--yes"], { github });
+    assert.equal(refused.code, 1, refused.output);
+    assert.match(refused.output, /Choose one with --board: #2 "One", #3 "Two", or the workspace's board, #1 "ws Sprints", to link it\./);
+    const { code, output, asked } = await run(["install", member, "--cursor", "--no-instructions"], { github, interactive: true });
+    assert.equal(code, 0, output);
+    assert.ok(asked.some((q) => q.startsWith("acme/app has several linked project boards")));
+    assert.ok(github.repo("acme/app").linked.has(workspaceBoard().id));
+    assert.equal(manifestOf(member).github.board.number, workspaceBoard().number);
+  });
+
+  test("a workspace board of another owner is not linked", async () => {
+    await installed(workspace);
+    const manifest = manifestOf(workspace);
+    manifest.github.board.owner = "other";
+    write(workspace, checks.MANIFEST, JSON.stringify(manifest, null, 2));
+    const { output } = await installed(member);
+    assert.match(output, /The workspace's board, #1, belongs to other, and a board links only to its owner's repositories, not to acme\/app\./);
+    assert.deepEqual(github.boards.map((b) => b.title), ["ws Sprints", "app Sprints"]);
+  });
+
+  test("a board number of another owner picks none of the member's boards", async () => {
+    await installed(workspace);
+    const manifest = manifestOf(workspace);
+    manifest.github.board.owner = "other";
+    write(workspace, checks.MANIFEST, JSON.stringify(manifest, null, 2));
+    // acme's board #1 has the number the workspace recorded for another owner's board.
+    github.repo("acme/app").linked.add(workspaceBoard().id);
+    github.addBoard({ title: "App board", linkedTo: "acme/app", statuses: ["Todo", "In progress", "In review", "Done"],
+      iteration: "Sprint" });
+    const refused = await run(["install", member, "--yes"], { github });
+    assert.equal(refused.code, 1, refused.output);
+    assert.match(refused.output, /acme\/app has 2 linked project boards\. Choose one with --board/);
+  });
+
+  test("--team installs the team in a member, and an update keeps it", async () => {
+    await installed(workspace);
+    await installed(member, "--team");
+    assert.ok(exists(member, ".claude/agents/engineering-lead.md"));
+    assert.match(read(member, ".claude/settings.json"), /gate\.mjs hook bash-guard/);
+    await installed(member);
+    assert.equal(manifestOf(member).team, true);
+    assert.ok(exists(member, ".claude/agents/engineering-lead.md"));
+  });
+
+  test("an installation that had the team keeps it when a workspace is installed around it", async () => {
+    await installed(member);
+    assert.ok(exists(member, ".claude/agents/engineering-lead.md"));
+    // An installation from before the team was a choice records no team.
+    const manifest = manifestOf(member);
+    delete manifest.team;
+    write(member, checks.MANIFEST, JSON.stringify(manifest, null, 2));
+    await installed(workspace);
+    const { output } = await installed(member);
+    assert.ok(exists(member, ".claude/agents/engineering-lead.md"));
+    assert.equal(manifestOf(member).team, true);
+    assert.deepEqual(manifestOf(member).workspace, { repository: "acme/ws", path: "app" });
+    assert.match(checks.findBlock(read(member, "AGENTS.md")), /member of the agent-fleet workspace/);
+    assert.doesNotMatch(output, /without the agent team/);
+  });
+
+  test("a member cloned on its own keeps its workspace and team choice on update", async () => {
+    await installed(workspace);
+    await installed(member);
+    const alone = path.join(dir, "alone");
+    fs.mkdirSync(alone);
+    const moved = path.join(alone, "app");
+    fs.renameSync(member, moved);
+    const { output } = await run(["update", moved, "--yes"], { github }).then((result) => {
+      assert.equal(result.code, 0, result.output);
+      return result;
+    });
+    assert.doesNotMatch(output, /Workspace member:/);
+    assert.match(output, /: \d+ unchanged\./);
+    assert.doesNotMatch(output, /\d+ (create|update|delete)/);
+    assert.deepEqual(manifestOf(moved).workspace, { repository: "acme/ws", path: "app" });
+    assert.equal(manifestOf(moved).team, false);
+    assert.equal(exists(moved, ".claude/agents"), false);
+  });
+
+  test("a worktree kept inside its own repository is not a member of it", async () => {
+    await installed(member);
+    const git = (...args) => spawnSync("git", ["-C", member, "-c", "user.email=t@example.com", "-c", "user.name=t", ...args],
+      { encoding: "utf8" });
+    git("add", "-A");
+    git("commit", "-qm", "install");
+    const worktree = path.join(member, ".claude/worktrees/feat");
+    assert.equal(git("worktree", "add", "-q", "-b", "feat", worktree).status, 0);
+    const { output } = await installed(worktree);
+    assert.doesNotMatch(output, /Workspace member:/);
+    assert.equal(manifestOf(worktree).workspace, undefined);
+    assert.ok(exists(worktree, ".claude/agents/engineering-lead.md"));
+  });
+
+  test("a repository nested in a member belongs to the member's workspace", async () => {
+    await installed(workspace);
+    await installed(member);
+    const nested = path.join(member, "plugin");
+    spawnSync("git", ["init", "-q", nested]);
+    spawnSync("git", ["-C", nested, "remote", "add", "origin", "https://github.com/acme/plugin.git"]);
+    await installed(nested);
+    assert.deepEqual(manifestOf(nested).workspace, { repository: "acme/ws", path: "app/plugin" });
+    assert.ok(github.repo("acme/plugin").linked.has(workspaceBoard().id));
+  });
+
+  test("--no-workspace keeps a repository on its own across updates, and --workspace makes it a member again", async () => {
+    await installed(workspace);
+    const fresh = await installed(member, "--no-workspace");
+    assert.doesNotMatch(fresh.output, /Workspace member:/);
+    assert.equal(manifestOf(member).workspace, false);
+    assert.ok(exists(member, ".claude/agents/engineering-lead.md"));
+    const again = await installed(member);
+    assert.doesNotMatch(again.output, /Workspace member:/);
+    assert.equal(manifestOf(member).workspace, false);
+    assert.doesNotMatch(checks.findBlock(read(member, "AGENTS.md")), /member of the agent-fleet workspace/);
+
+    const joined = await installed(member, "--workspace");
+    assert.match(joined.output, /Workspace member:/);
+    assert.deepEqual(manifestOf(member).workspace, { repository: "acme/ws", path: "app" });
+    // The team this repository already had stays.
+    assert.equal(manifestOf(member).team, true);
+    await installed(member, "--no-workspace");
+    assert.equal(manifestOf(member).workspace, false);
+    assert.equal(parseArgs(["update", "--workspace"]).workspace, true);
+  });
+
+  test("a member that leaves its workspace gets the agent team, unless --no-team leaves it out", async () => {
+    await installed(workspace);
+    await installed(member);
+    const left = await installed(member, "--no-workspace");
+    assert.match(left.output, /leaves its workspace, so Claude Code gets the agent team, its permission rules, and the gate's hooks\. Add --no-team to leave them out\./);
+    assert.equal(manifestOf(member).workspace, false);
+    assert.equal(manifestOf(member).team, true);
+    assert.match(read(member, ".claude/settings.json"), /gate\.mjs hook bash-guard/);
+
+    await installed(member, "--workspace", "--no-team");
+    const without = await installed(member, "--no-workspace", "--no-team");
+    assert.doesNotMatch(without.output, /leaves its workspace/);
+    assert.equal(manifestOf(member).team, false);
+    assert.equal(exists(member, ".claude/agents"), false);
+  });
+
+  test("a repository nested in a member cloned on its own is a repository of its own", async () => {
+    await installed(workspace);
+    await installed(member);
+    const moved = path.join(dir, "alone", "app");
+    fs.mkdirSync(path.dirname(moved));
+    fs.renameSync(member, moved);
+    const nested = path.join(moved, "plugin");
+    spawnSync("git", ["init", "-q", nested]);
+    spawnSync("git", ["-C", nested, "remote", "add", "origin", "https://github.com/acme/plugin.git"]);
+    const { output } = await installed(nested);
+    assert.doesNotMatch(output, /Workspace member:/);
+    assert.equal(manifestOf(nested).workspace, undefined);
+    assert.equal(manifestOf(nested).team, true);
+    assert.ok(exists(nested, ".claude/agents/engineering-lead.md"));
+    assert.doesNotMatch(checks.findBlock(read(nested, "AGENTS.md")), /member of the agent-fleet workspace/);
+  });
+
+  test("a member's first installation passes over a closed workspace board", async () => {
+    await installed(workspace);
+    workspaceBoard().closed = true;
+    const { output } = await installed(member);
+    assert.match(output, /The workspace's board, #1 "ws Sprints", is closed, so acme\/app needs a board of its own\. To use the workspace's board, reopen it on GitHub and rerun agent-fleet with --board 1\./);
+    const own = github.boards.find((b) => b.title === "app Sprints");
+    assert.ok(own);
+    assert.ok(github.repo("acme/app").linked.has(own.id));
+    assert.equal(manifestOf(member).github.board.number, own.number);
+  });
+
+  test("--workspace outside a workspace says so", async () => {
+    const { output } = await installed(member, "--workspace");
+    assert.match(output, /No installed workspace is around .+, so it stays a repository of its own\. An update inside an installed workspace makes it a member\./);
+    assert.equal(manifestOf(member).workspace, undefined);
+  });
+
+  test("a worktree kept inside a member records the member's path", async () => {
+    await installed(workspace);
+    await installed(member);
+    const git = (...args) => spawnSync("git", ["-C", member, "-c", "user.email=t@example.com", "-c", "user.name=t", ...args],
+      { encoding: "utf8" });
+    write(member, ".gitignore", ".claude/worktrees/\n");
+    git("add", "-A");
+    git("commit", "-qm", "install");
+    const worktree = path.join(member, ".claude/worktrees/feat");
+    assert.equal(git("worktree", "add", "-q", "-b", "feat", worktree).status, 0);
+    await installed(worktree);
+    assert.deepEqual(manifestOf(worktree).workspace, { repository: "acme/ws", path: "app" });
+    assert.match(checks.findBlock(read(worktree, "AGENTS.md")), /which holds it at `app\/`/);
+  });
+
+  test("a .agents folder without agent-fleet's manifest is no workspace", async () => {
+    write(workspace, ".agents/skills/mine/SKILL.md", "---\nname: mine\ndescription: Mine.\n---\n");
+    const { output } = await installed(member);
+    assert.doesNotMatch(output, /Workspace member:/);
+    assert.equal(manifestOf(member).workspace, undefined);
+    assert.ok(exists(member, ".claude/agents/engineering-lead.md"));
+  });
+
+  test("a repository inside a repository without an installation is not a member", async () => {
+    const { output } = await installed(member);
+    assert.doesNotMatch(output, /Workspace member:/);
+    assert.equal(manifestOf(member).workspace, undefined);
+    assert.equal(manifestOf(member).team, true);
+    assert.ok(exists(member, ".claude/agents/engineering-lead.md"));
+  });
+
+  test("a member notes when the workspace has another version", async () => {
+    await installed(workspace);
+    const manifest = manifestOf(workspace);
+    manifest.version = "2.0.0";
+    write(workspace, checks.MANIFEST, JSON.stringify(manifest, null, 2));
+    const { output } = await installed(member);
+    assert.match(output, /the workspace at .+ has agent-fleet 2\.0\.0, older than the \d+\.\d+\.\d+ this repository now has\. Update the workspace too, so both read the same skills\./);
+    manifest.version = "99.0.0";
+    write(workspace, checks.MANIFEST, JSON.stringify(manifest, null, 2));
+    const newer = await run(["install", member, "--yes", "--force"], { github });
+    assert.match(newer.output, /has agent-fleet 99\.0\.0, newer than the \d+\.\d+\.\d+ this repository now has\. Update this repository with agent-fleet 99\.0\.0/);
+  });
+});
+
 describe("AGENTS.md and CLAUDE.md", () => {
   let dir;
   let project;

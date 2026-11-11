@@ -56,7 +56,17 @@ because every later skill will trust it.
    - a single repository with several components, such as a monorepo with an
      app, a server, and shared packages;
    - a workspace of independent repositories: child directories with their own
-     `.git`, usually ignored by the workspace's `.gitignore`.
+     `.git`, usually ignored by the workspace's `.gitignore`;
+   - a member of such a workspace: a child repository with an installation of
+     its own, whose `.agents/agent-fleet.json` records the `workspace`. Inside
+     the workspace it reads each profile file it lacks from the workspace root,
+     as "Where things live" in `.agents/references/project-profile.md`
+     describes. Give it only the profile files it needs when opened on its
+     own: its tracker settings, its own components, and its protected files,
+     services that need approval, and sensitive paths. Inside the workspace,
+     the workspace's safety settings apply as well. Read the workspace's
+     profile first, and refer to it for boundaries and routing across
+     repositories instead of copying them.
 3. For each repository, read its remote with `git -C <path> remote get-url origin`
    and its metadata with
    `gh repo view <owner/repo> --json nameWithOwner,owner,defaultBranchRef,hasIssuesEnabled,visibility`.
