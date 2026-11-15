@@ -30,6 +30,8 @@ function secondOpinion(dir, base, repo) {
 
 const AGENTS = agentNames();
 const read = (relative) => fs.readFileSync(path.join(ROOT, relative), "utf8");
+// A file's text with line breaks and runs of spaces collapsed, for matching a sentence across wrapped lines.
+const flat = (relative) => read(relative).replace(/\s+/g, " ");
 const field = (frontmatter, key) => {
   const raw = Object.fromEntries(frontmatter)[key];
   return raw === undefined ? undefined : checks.scalar(raw);
@@ -165,6 +167,41 @@ describe("models", () => {
     }
     assert.match(read("skills/lead-issue/SKILL.md"), /Choose the model/);
   });
+
+  test("the models.md row decides a role's model, and lead-issue never starts a role as a team agent type", () => {
+    const rules = flat("references/subagents.md");
+    const section = (start, end) => {
+      const from = rules.indexOf(start);
+      const to = rules.indexOf(end, from);
+      assert.ok(from >= 0 && to > from, start);
+      return rules.slice(from, to);
+    };
+    // A team agent type carries its own instructions, which differ from the role briefs, and runs only the models its
+    // definition allows. So a lead-issue role starts from its brief alone, on the model its row chose.
+    const roles = section("### Ways to start one", "### What every brief carries");
+    assert.match(roles, /When `lead-issue` starts a role agent, start it from its role brief alone, never as an agent type the project defines for the same role/);
+    assert.match(flat("skills/lead-issue/briefs/verifier.md"), /start it from that brief alone, never as the project's `reviewer` agent type/);
+    // An agent whose own definition limits the types it may start, as the team's verifier's does, counts only those
+    // as available. The example stays true only while the team's verifier is limited that way.
+    const choose = section("## Choose the model", "## Write a self-contained brief");
+    assert.match(choose, /Find what the host can start now\..*limits the agent types you may start, as the agent team's verifier's does, count only the ways that start those types\. 3\./);
+    assert.match(read("agents/verifier.md"), /gate\.mjs hook agent-scope reviewer Explore"/);
+    // The old rule kept a project agent type and dropped every entry it could not run, so a role meant for another
+    // provider ran on the type's model. No shipped file may bring back a narrowing by the type, or starting a role as
+    // the type, outside the team's own agent definitions.
+    const typeFirst = [
+      /\b(only|just) (from )?(the )?(entries|models)\b[^.]{0,60}\b(types?|agent) (can run|runs|supports?)\b/i,
+      /\b(only|just) (from )?(the )?(entries|models)\b[^.]{0,30}\b(supported|allowed) by\b[^.]{0,30}\btype\b/i,
+      /must (run as|use) (a project agent type|its type)/i,
+      /\b(start|spawn|run)\b(?:(?!\bnever\b)[^.]){0,40}\bas (the|that|its) (project's )?(`\w+` )?(agent )?type\b/i,
+    ];
+    const files = [["README.md", flat("README.md")]];
+    for (const [destination, { content }] of desiredFiles([])) {
+      if (destination.endsWith(".md") && !destination.startsWith(".claude/agents/")) files.push([destination, String(content).replace(/\s+/g, " ")]);
+    }
+    assert.ok(files.some(([destination]) => destination.endsWith("references/subagents.md")), "the scan covers the references");
+    for (const [file, text] of files) for (const pattern of typeFirst) assert.doesNotMatch(text, pattern, file);
+  });
 });
 
 describe("lead-issue", () => {
@@ -212,7 +249,6 @@ describe("lead-issue", () => {
   });
 
   test("the workspace steps are named where they're needed, in the skill and in the team", () => {
-    const flat = (file) => read(file).replace(/\s+/g, " ");
     for (const file of ["skills/lead-issue/SKILL.md", "agents/engineering-lead.md"]) {
       assert.ok(flat(file).includes("node .agents/scripts/gate.mjs workspace set <path>..."), `${file}: workspace set`);
       assert.ok(flat(file).includes("set-base <base-commit> --repo <path>"), `${file}: set-base --repo`);

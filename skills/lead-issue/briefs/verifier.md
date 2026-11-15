@@ -48,10 +48,10 @@ to every claim you make.
      start one reviewer with the brief in
      `.agents/skills/lead-issue/briefs/reviewer.md`. Choose its model and
      effort from the `Reviewer` row of `docs/agents/models.md`, as "Choose
-     the model" in `.agents/references/subagents.md` describes. When the
-     host offers an agent type named `reviewer`, start it as that type, and
-     choose only from the entries that type can run on. Give it the scope `verify-work` describes and
-     leave out your acceptance verdicts. If your brief authorizes the
+     the model" in `.agents/references/subagents.md` describes, and start it
+     from that brief alone, never as the project's `reviewer` agent type, as
+     "Role agents" there describes. Give it the scope `verify-work` describes
+     and leave out your acceptance verdicts. If your brief authorizes the
      cross-model second opinion, copy that authorization into the reviewer's
      brief word for word; it is the one online service the review may use.
      Otherwise tell the reviewer to skip it. When you cannot start an agent,
