@@ -57,16 +57,16 @@ so the same file gives the same choice on every run:
    name alone. An entry is available when one of those ways can start that
    exact model at that exact effort. A way that takes only a model family
    matches an entry that names a version only when the host shows which
-   version the family starts.
+   version the family starts. When your own definition limits the agent types
+   you may start, as the agent team's verifier's does, count only the ways
+   that start those types.
 3. **Take the first available entry**, in the row's order. Never use a model
    or an effort the row does not list: another version, a nearby effort, or a
    similar model is not a match.
 4. **When nothing is available,** use your own model and effort if the row
    ends with `Same as the lead`. Otherwise stop and ask the user which model to
    use, and start nothing on a guess.
-5. **When the agent must run as a project agent type,** as a skill may
-   require, consider only the entries that type can run on, in the same order.
-6. **Record the choice.** Put the model and effort you started the agent on,
+5. **Record the choice.** Put the model and effort you started the agent on,
    and each earlier entry you skipped with the reason, in the record the skill
    keeps for that work. When you skipped the row's first entry, tell the user
    once per run.
@@ -176,10 +176,13 @@ Use the first way the host offers:
 
 Use the second way instead of the first when the model you chose, as
 [Choose the model](#choose-the-model) describes, is one that only a separate
-thread can run, such as a model from another provider. When the project
-defines an agent type for the role, such as the agent team's `verifier`, start
-the role as that type: the host may enforce checks the definition carries.
-`lead-issue` says when a role must use its type.
+thread can run, such as a model from another provider.
+
+When `lead-issue` starts a role agent, start it from its role brief alone,
+never as an agent type the project defines for the same role, such as the
+agent team's `verifier`. That type carries instructions of its own that differ
+from the brief, such as how the verifier records its verdict and whether the
+developer may open the pull request.
 
 ### What every brief carries
 
