@@ -6,7 +6,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import * as checks from "../lib/check-skills.mjs";
 import { main, parseArgs, UsageError } from "../lib/cli.mjs";
-import { agentNames, compareVersions, markdownTables, missingSettings, ROOT, skillNames, version } from "../lib/install.mjs";
+import { agentNames, compareVersions, hasTodo, markdownTables, missingSettings, ROOT, skillNames, version }
+  from "../lib/install.mjs";
 import { FakeGitHub } from "./fake-github.mjs";
 
 const SKILLS = skillNames();
@@ -69,6 +70,9 @@ const write = (project, relative, text) => {
   fs.writeFileSync(path.join(project, relative), text);
 };
 const template = (name) => fs.readFileSync(path.join(ROOT, "skills/setup-project/templates", name), "utf8");
+// Replace every placeholder, as setup-project does, and keep the comments and code that name TODO, such as the legend.
+const fill = (text) => text.replace(/<!--[\s\S]*?-->|`[^`\n]*`|\bTODO\b/g, (match) => (match === "TODO" ? "Filled" : match));
+const PROFILE_FILES = ["issue-tracker.md", "domain.md", "verification.md", "autonomy.md", "models.md"];
 
 describe("install", () => {
   let dir;
@@ -953,9 +957,8 @@ describe("AGENTS.md and CLAUDE.md", () => {
 
   test("an existing AGENTS.md keeps its content", async () => {
     fs.writeFileSync(path.join(project, "AGENTS.md"), "# Mine\n\nKeep this rule.\n");
-    for (const name of ["issue-tracker.md", "domain.md", "verification.md", "autonomy.md", "models.md"]) {
-      write(project, `docs/agents/${name}`, template(name).replaceAll("TODO", "Filled"));
-    }
+    for (const name of PROFILE_FILES) write(project, `docs/agents/${name}`, fill(template(name)));
+    assert.match(read(project, "docs/agents/issue-tracker.md"), /^`TODO` marks a value nobody has confirmed\./m);
     const first = await install();
     let agents = read(project, "AGENTS.md");
     assert.ok(agents.startsWith("# Mine\n\nKeep this rule.\n\n<!-- agent-fleet:begin"));
@@ -966,6 +969,54 @@ describe("AGENTS.md and CLAUDE.md", () => {
     assert.match(checks.findBlock(agents), /`\.kiro\/skills\/`/);
     assert.ok(agents.startsWith("# Mine\n\nKeep this rule.\n"));
     assert.equal(agents.split("agent-fleet:begin").length, 2);
+  });
+
+  test("a TODO counts only as a bare word outside comments and code", () => {
+    assert.equal(hasTodo(template("issue-tracker.md")), true);
+    assert.equal(hasTodo(fill(template("issue-tracker.md"))), false);
+    for (const text of [
+      "`TODO` marks a value nobody has confirmed.\n",
+      "<!-- Replace every TODO,\nor run setup-project. -->\n# Done\n",
+      "```\nTODO\n```\n",
+      "Run ``a `TODO` b`` here.\n",
+      "See TODOS.md.\n",
+    ]) assert.equal(hasTodo(text), false, text);
+    for (const text of [
+      "| Fallback repository | TODO: where a new issue goes when its owner is unclear. |\n",
+      "| Labels | Use existing labels only. Typical mapping: TODO defect → `bug`. |\n",
+      "| TODO | `owner/repo` | `.` | Filled |\n",
+      "TODO: confirm with the maintainer which component owns `dev.sh`.\n",
+      "`TODO` marks a value.\n\nWork that spans components: TODO, such as one issue.\n",
+    ]) assert.equal(hasTodo(text), true, text);
+  });
+
+  test("a complete AGENTS.md and tracker that keep the templates' notes ask for nothing", async () => {
+    assert.equal((await install()).code, 0);
+    fs.writeFileSync(path.join(project, "AGENTS.md"), fill(read(project, "AGENTS.md")));
+    for (const name of PROFILE_FILES) write(project, `docs/agents/${name}`, fill(template(name)));
+    assert.match(read(project, "AGENTS.md"), /<!-- The agent-fleet installer created this file\. Replace every TODO,/);
+    const { code, output } = await install();
+    assert.equal(code, 0, output);
+    assert.doesNotMatch(output, /Next:/);
+  });
+
+  test("a placeholder left in the tracker still asks for setup-project", async () => {
+    assert.equal((await install()).code, 0);
+    fs.writeFileSync(path.join(project, "AGENTS.md"), fill(read(project, "AGENTS.md")));
+    for (const name of PROFILE_FILES) write(project, `docs/agents/${name}`, fill(template(name)));
+    const complete = read(project, "docs/agents/issue-tracker.md");
+    for (const tracker of [
+      complete.replace("| Fallback repository | Filled:", "| Fallback repository | TODO:"),
+      complete.replace("Typical mapping: Filled defect", "Typical mapping: TODO defect"),
+      `${complete}\nTODO: confirm with the maintainer which component owns \`dev.sh\`.\n`,
+    ]) {
+      assert.notEqual(tracker, complete);
+      write(project, "docs/agents/issue-tracker.md", tracker);
+      const { code, output } = await install();
+      assert.equal(code, 0, output);
+      assert.match(output, /resolve the TODOs in docs\/agents\/issue-tracker\.md/);
+      assert.doesNotMatch(output, /AGENTS\.md/);
+    }
   });
 
   test("a hand-edited section blocks the update until forced", async () => {
